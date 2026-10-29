@@ -59,9 +59,11 @@ import jdk.jfr.consumer.RecordedEvent;
  * before it. The event names the virtual thread, not the carrier, so that sample cannot
  * be told apart from an honest one; dropping every virtual thread's first sample removes
  * it whenever it lands on one, at the price of most virtual-thread allocation (a virtual
- * thread is typically sampled once or never). It does not make the estimate a floor: a
- * virtual thread that resumed on a carrier not yet sampled carries that carrier's history
- * on a later sample, which is kept.
+ * thread is typically sampled once or never). A virtual thread that resumed on a carrier not
+ * yet sampled carries that carrier's history on a later sample; such a sample is left out too
+ * when it weighs more than every thread's counter grew by in the recording, which allocation
+ * inside the recording cannot (one carrier's history: 3.89 GB on a sample, 259 MB counted).
+ * A later sample under that bound is kept, so the estimate is still not a floor.
  *
  * <p>Independently of either, {@code jdk.ThreadAllocationStatistics} (written at every
  * chunk boundary by the JDK's own settings) carries each thread's exact allocation
@@ -243,12 +245,20 @@ public final class AllocationCollector implements JfrReader.Sink {
         final Map<String, Long> counted = new HashMap<>();
         final Map<String, Long> estimated = new HashMap<>();
         counted(chosen, born, counted, estimated);
+        if (!counted.isEmpty()) {
+            long bound = 0;
+            for (final long bytes : counted.values()) {
+                bound += bytes;
+            }
+            sampled.dropHeavierThan(bound);
+        }
         sampled.dropFirsts(born);
         report = new AllocationReport(info, source, chosen.total, chosen.samples, chosen.events, counted,
                 toMap(chosen.byThread), toMap(chosen.byClass), toMap(chosen.bySite), toMaps(chosen.classByThread),
                 toMaps(chosen.siteByThread), new AllocationReport.Support(toMap(chosen.countByThread),
                 toMap(chosen.countByClass), toMap(chosen.countBySite)),
-                new AllocationReport.Dropped(chosen.virtualFirsts, chosen.virtualFirstBytes), estimated);
+                new AllocationReport.Dropped(chosen.virtualFirsts, chosen.virtualFirstBytes),
+                new AllocationReport.Dropped(chosen.carrierHistories, chosen.carrierHistoryBytes), estimated);
     }
 
     /**
@@ -334,6 +344,17 @@ public final class AllocationCollector implements JfrReader.Sink {
     private static final class Accumulator {
         private static final String NO_THREAD = "<no thread>";
         private static final String NO_CLASS = "?";
+        static final int HEAVY_KEPT = 256;
+
+        /** One virtual-thread sample kept in case it is carrier history, re-pointed when a heavier one replaces it. */
+        private static final class Heavy {
+            ThreadRef thread;
+            long time;
+            long bytes;
+            String threadName;
+            String cls;
+            Stack site;
+        }
 
         long total;
         /** Samples in the totals. */
@@ -343,6 +364,17 @@ public final class AllocationCollector implements JfrReader.Sink {
         /** Virtual threads' first samples taken out of the totals, and their weight. */
         long virtualFirsts;
         long virtualFirstBytes;
+        /** Virtual threads' later samples taken out as carrier history ({@link #dropHeavierThan}), and their weight. */
+        long carrierHistories;
+        long carrierHistoryBytes;
+        /**
+         * The heaviest virtual-thread samples seen, at most {@link #HEAVY_KEPT}: only a carrier's first sample in the
+         * recording can outweigh the bound, so there are at most as many as carriers, and a scheduler has at most 256.
+         */
+        private final Heavy[] heavy = new Heavy[HEAVY_KEPT];
+        private int heavyCount;
+        /** Where the lightest of {@link #heavy} is, the one a heavier sample replaces. */
+        private int heavyMin;
         final ObjLongHashMap<String> byThread = new ObjLongHashMap<>(64);
         final ObjLongHashMap<String> byClass = new ObjLongHashMap<>(1024);
         final ObjLongHashMap<Stack> bySite = new ObjLongHashMap<>(4096);
@@ -411,6 +443,9 @@ public final class AllocationCollector implements JfrReader.Sink {
             final String threadName = thread == null ? NO_THREAD : thread.name();
             final String className = cls == null ? NO_CLASS : cls;
             add(bytes, threadName, className, site);
+            if (thread != null && thread.isVirtual()) {
+                keepIfHeavy(thread, time, bytes, threadName, className, site);
+            }
             if (thread != null) {
                 final int index = firsts.keyIndex(thread);
                 final First f;
@@ -434,6 +469,59 @@ public final class AllocationCollector implements JfrReader.Sink {
                     }
                 }
             }
+        }
+
+        private void keepIfHeavy(final ThreadRef thread, final long time, final long bytes, final String threadName,
+                                 final String cls, final Stack site) {
+            final int at;
+            if (heavyCount < HEAVY_KEPT) {
+                at = heavyCount++;
+                heavy[at] = new Heavy();
+            } else if (bytes > heavy[heavyMin].bytes) {
+                at = heavyMin;
+            } else {
+                return;
+            }
+            final Heavy h = heavy[at];
+            h.thread = thread;
+            h.time = time;
+            h.bytes = bytes;
+            h.threadName = threadName;
+            h.cls = cls;
+            h.site = site;
+            if (heavyCount == HEAVY_KEPT) {
+                // a full array only changes its lightest entry, so the scan runs when a sample beats it
+                int min = 0;
+                for (int i = 1; i < HEAVY_KEPT; i++) {
+                    if (heavy[i].bytes < heavy[min].bytes) {
+                        min = i;
+                    }
+                }
+                heavyMin = min;
+            }
+        }
+
+        /**
+         * Takes out of the totals every virtual-thread sample, other than its thread's first, that weighs more than
+         * {@code bound}, every thread's counted allocation in the recording: the carrier it ran on had not been sampled
+         * in the recording, so the weight reaches back before it. A thread's first sample is left to
+         * {@link #dropFirsts}, which counts it as such. Called before it, while the firsts are known.
+         */
+        void dropHeavierThan(final long bound) {
+            for (int i = 0; i < heavyCount; i++) {
+                final Heavy h = heavy[i];
+                if (h.bytes <= bound) {
+                    continue;
+                }
+                final First f = firsts.get(h.thread);
+                if (f != null && f.time == h.time && f.bytes == h.bytes) {
+                    continue;
+                }
+                carrierHistories++;
+                carrierHistoryBytes += h.bytes;
+                takeOut(h.threadName, h.cls, h.site, h.bytes);
+            }
+            heavyCount = 0;
         }
 
         private void add(final long bytes, final String threadName, final String cls, final Stack site) {
@@ -516,24 +604,29 @@ public final class AllocationCollector implements JfrReader.Sink {
                     virtualFirsts++;
                     virtualFirstBytes += f.bytes;
                 }
-                total -= f.bytes;
-                samples--;
-                subtract(byThread, f.threadName, f.bytes);
-                subtract(byClass, f.cls, f.bytes);
-                subtract(bySite, f.site, f.bytes);
-                subtract(countByThread, f.threadName, 1);
-                subtract(countByClass, f.cls, 1);
-                subtract(countBySite, f.site, 1);
-                // Two threads can share a name (a pool that recycles them); the per-name maps may
-                // already be gone after the first of them.
-                subtract(classByThread.get(f.threadName), f.cls, f.bytes);
-                subtract(siteByThread.get(f.threadName), f.site, f.bytes);
-                if (byThread.excludes(f.threadName)) {
-                    classByThread.remove(f.threadName);
-                    siteByThread.remove(f.threadName);
-                }
+                takeOut(f.threadName, f.cls, f.site, f.bytes);
             }
             firsts.clear();
+        }
+
+        /** Takes one sample back out of the totals and every breakdown. */
+        private void takeOut(final String threadName, final String cls, final Stack site, final long bytes) {
+            total -= bytes;
+            samples--;
+            subtract(byThread, threadName, bytes);
+            subtract(byClass, cls, bytes);
+            subtract(bySite, site, bytes);
+            subtract(countByThread, threadName, 1);
+            subtract(countByClass, cls, 1);
+            subtract(countBySite, site, 1);
+            // Two threads can share a name (a pool that recycles them); the per-name maps may
+            // already be gone after the first of them.
+            subtract(classByThread.get(threadName), cls, bytes);
+            subtract(siteByThread.get(threadName), site, bytes);
+            if (byThread.excludes(threadName)) {
+                classByThread.remove(threadName);
+                siteByThread.remove(threadName);
+            }
         }
 
         private static <K> void subtract(final ObjLongHashMap<K> map, final K key, final long bytes) {

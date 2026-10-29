@@ -127,6 +127,45 @@ class AllocationTest {
     }
 
     @Test
+    void aLaterVirtualSampleHeavierThanEverythingCountedIsCarrierHistory() {
+        // A virtual thread that resumed on a carrier not sampled in the recording carries that
+        // carrier's history on a later sample; no sample can weigh more than every counter grew by.
+        final ThreadRef carrier = new ThreadRef(1, "ForkJoinPool-1-worker-1");
+        final ThreadRef vt1 = new ThreadRef(2, "vt-1", true);
+        final AllocationCollector c = new AllocationCollector();
+        c.counter(carrier, S, 1_000_000_000L);
+        c.counter(carrier, 9 * S, 1_010_000_000L);
+        c.sample(vt1, 2 * S, 300, "[B", SITE_B);
+        c.sample(vt1, 3 * S, 4_000_000, "[B", SITE_B);
+        c.sample(vt1, 4 * S, 900_000_000L, "[B", SITE_A);
+        c.sample(vt1, 5 * S, 9_000_000, "[B", SITE_B);
+        c.finish(info("a.jfr", 10));
+        final AllocationReport r = c.report();
+
+        // The first sample is a first, the 900 MB one history, the two under the 10 MB counted stay.
+        assertEquals(13_000_000, r.totalBytes());
+        assertEquals(2, r.samples());
+        assertEquals(Map.of(SITE_B, 13_000_000L), r.bySite());
+        assertEquals(new AllocationReport.Dropped(1, 300), r.virtualFirsts());
+        assertEquals(new AllocationReport.Dropped(1, 900_000_000L), r.carrierHistory());
+        assertTrue(r.warnings().getFirst().contains("and 1 later one heavier than the recording's counted allocation, "
+                + "900 MB"), r.warnings().getFirst());
+        assertEquals("", r.droppedNote());
+    }
+
+    @Test
+    void withoutCountersEveryLaterVirtualSampleIsKept() {
+        // The bound is the counters' total; a recording without them has none, and nothing more is left out.
+        final ThreadRef vt1 = new ThreadRef(2, "vt-1", true);
+        final AllocationCollector c = new AllocationCollector();
+        c.sample(vt1, 2 * S, 300, "[B", SITE_B);
+        c.sample(vt1, 4 * S, 900_000_000L, "[B", SITE_A);
+        c.finish(info("a.jfr", 10));
+        assertEquals(900_000_000L, c.report().totalBytes());
+        assertEquals(AllocationReport.Dropped.NONE, c.report().carrierHistory());
+    }
+
+    @Test
     void theCounterIsSetAgainstTheSamplesOfItsOwnStretch() {
         // Field case: counters are read at chunk ends. A pool thread that started after the first
         // chunk and allocated before its first reading had those bytes in the estimate and not in

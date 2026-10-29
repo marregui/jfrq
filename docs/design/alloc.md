@@ -34,7 +34,9 @@ flowchart TD
     S["Allocation event"] --> T{"TLAB event?"}
     T -->|yes| K1["Count its weight"]
     T -->|"no: ObjectAllocationSample"| F{"First sample<br/>of its thread?"}
-    F -->|no| K2["Count its weight"]
+    F -->|no| H{"Virtual thread, heavier than<br/>every counter's growth?"}
+    H -->|no| K2["Count its weight"]
+    H -->|yes| D3["Leave out;<br/>counted in the warning"]
     F -->|yes| V{"Virtual thread?"}
     V -->|yes| D1["Leave out;<br/>counted in the warning"]
     V -->|no| B{"Born in the file?<br/>ThreadStart before its first<br/>counter reading and first sample"}
@@ -58,14 +60,28 @@ warning whenever a virtual thread lost a sample, with the count and the bytes le
 (`61 first samples of virtual threads, 3.35 GB, not counted`); those bytes include the
 carriers' history, so they can be far more than what was left out.
 
-The rule does not make the estimate a floor. A virtual thread that blocks is unmounted
-and can resume on another carrier; when that carrier had not been sampled in the
-recording yet, its history lands on the virtual thread's second or later sample and is
-kept. With 64 virtual threads that sleep between allocations, 268 MB allocated in the
-recording was estimated at 403 MB and 466 MB in two runs, one virtual thread carrying
-337 MB on a single sample. There are about as many carriers as cores, so at most that
-many samples can do it; the warning says so. A single virtual thread's row is the
-carrier bytes it happened to be sampled on, not what it allocated.
+**A later sample heavier than everything counted is carrier history too.** A virtual
+thread that blocks is unmounted and can resume on another carrier; when that carrier had
+not been sampled in the recording yet, its history lands on the virtual thread's second
+or later sample. The carriers are platform threads, so `jdk.ThreadAllocationStatistics`
+counts them, and a sample's weight inside the recording is at most its carrier's growth
+there, which is at most the growth of every counter together. A later virtual-thread sample
+heavier than that sum reaches back before the recording, and is left out and counted in
+the same warning (`and 1 later one heavier than the recording's counted allocation,
+3.89 GB`). Measured on a Swing application up 3.5 hours: two samples weighed 3.89 GB and
+3.72 GB while every counter together grew by 259 MB in the 89 s recording; the first was a
+later sample, kept until this rule, and the headline read 4.15 GB (46.3 MB/s) against
+260 MB counted; with it, 258 MB. At most one sample per carrier can do it, and a scheduler
+has at most 256 carriers, so the collector keeps only the 256 heaviest virtual-thread
+samples to test against the bound at the end. Without counters in the file there is no
+bound and such a sample is kept.
+
+The rule still does not make the estimate a floor. Carrier history lighter than the
+bound stays: with 64 virtual threads that sleep between allocations, 268 MB allocated in
+the recording was estimated at 403 MB and 466 MB in two runs, one virtual thread carrying
+337 MB on a single sample. The bound is also loose when the counters' readings cover less
+than the recording. A single virtual thread's row is the carrier bytes it happened to be
+sampled on, not what it allocated.
 
 **Calibration.** `jdk.ThreadAllocationStatistics`, written at every chunk boundary by
 the JDK's own settings, is each thread's exact allocation counter. The difference between
