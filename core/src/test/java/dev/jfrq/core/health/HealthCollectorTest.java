@@ -3,13 +3,6 @@
 
 package dev.jfrq.core.health;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,6 +14,13 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import jdk.jfr.Recording;
+import jdk.jfr.consumer.RecordedEvent;
+import jdk.jfr.consumer.RecordingFile;
+
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport.ClassRow;
@@ -33,12 +33,13 @@ import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.report.Html;
 import dev.jfrq.core.report.Json;
 import dev.jfrq.core.report.JsonParser;
-import jdk.jfr.Recording;
-import jdk.jfr.consumer.RecordedEvent;
-import jdk.jfr.consumer.RecordingFile;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link HealthCollector} on one real recording of a JVM in trouble: two {@code System.gc()}

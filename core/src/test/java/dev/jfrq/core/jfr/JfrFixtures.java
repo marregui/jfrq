@@ -9,7 +9,6 @@ import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-
 import jdk.jfr.Recording;
 
 /**

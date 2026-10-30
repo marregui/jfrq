@@ -9,11 +9,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import jdk.jfr.consumer.RecordedEvent;
 
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.Nulls;
-import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjList;
+import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.health.ThreadCpu;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.Events;
@@ -25,7 +26,6 @@ import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.util.Sorts;
-import jdk.jfr.consumer.RecordedEvent;
 
 /**
  * Which threads were alive when the recording began and when it ended, and which started

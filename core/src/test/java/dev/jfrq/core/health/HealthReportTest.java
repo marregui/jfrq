@@ -3,24 +3,25 @@
 
 package dev.jfrq.core.health;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.junit.jupiter.api.Test;
+
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport.Series;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.ThreadRef;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** What {@link HealthReport} says about itself, on hand-built reports with exact values. */
 class HealthReportTest {

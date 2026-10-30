@@ -3,8 +3,6 @@
 
 package dev.jfrq.core.jfr;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -13,9 +11,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.junit.jupiter.api.Test;
+
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.ThreadRef;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class RecordingInfoTest {
 

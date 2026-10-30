@@ -3,11 +3,6 @@
 
 package dev.jfrq.core.stalls;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -16,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+
+import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
@@ -32,7 +29,11 @@ import dev.jfrq.core.stalls.Timeline.Pause;
 import dev.jfrq.core.stalls.Timeline.PauseKind;
 import dev.jfrq.core.stalls.Timeline.Sample;
 import dev.jfrq.core.stalls.Timeline.ThreadTimeline;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives {@link StallAnalysis} with hand-built timelines. Times are in milliseconds in the

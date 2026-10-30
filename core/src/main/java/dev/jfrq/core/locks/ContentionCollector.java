@@ -6,6 +6,7 @@ package dev.jfrq.core.locks;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import jdk.jfr.consumer.RecordedEvent;
 
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.LongObjHashMap;
@@ -20,7 +21,6 @@ import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.IdleMatcher;
 import dev.jfrq.core.util.Sorts;
-import jdk.jfr.consumer.RecordedEvent;
 
 /**
  * Collects contended monitor enters and parks into a {@link ContentionReport}.

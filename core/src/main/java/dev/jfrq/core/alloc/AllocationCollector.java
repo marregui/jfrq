@@ -6,6 +6,7 @@ package dev.jfrq.core.alloc;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import jdk.jfr.consumer.RecordedEvent;
 
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.Nulls;
@@ -21,7 +22,6 @@ import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
-import jdk.jfr.consumer.RecordedEvent;
 
 /**
  * Aggregates allocation events into an {@link AllocationReport}.

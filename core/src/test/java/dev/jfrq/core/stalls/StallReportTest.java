@@ -3,16 +3,13 @@
 
 package dev.jfrq.core.stalls;
 
-import static dev.jfrq.core.stalls.StallAnalysisTest.MS;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Interval;
@@ -21,7 +18,11 @@ import dev.jfrq.core.stalls.StallReport.Sight;
 import dev.jfrq.core.stalls.StallReport.ThreadSummary;
 import dev.jfrq.core.stalls.Timeline.Sample;
 import dev.jfrq.core.stalls.Timeline.ThreadTimeline;
-import org.junit.jupiter.api.Test;
+
+import static dev.jfrq.core.stalls.StallAnalysisTest.MS;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link StallReport#unseen()}: the verdict on what a recording can show, with the arithmetic

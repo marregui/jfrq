@@ -5,12 +5,6 @@ package dev.jfrq.core.model;
 
 import java.util.Arrays;
 import java.util.List;
-
-import dev.jfrq.core.coll.IdentityObjObjHashMap;
-import dev.jfrq.core.coll.ObjObjHashMap;
-import dev.jfrq.core.jfr.Events;
-import dev.jfrq.core.jfr.Fields;
-import dev.jfrq.core.jfr.Transient;
 import jdk.jfr.EventType;
 import jdk.jfr.consumer.RecordedClass;
 import jdk.jfr.consumer.RecordedEvent;
@@ -18,6 +12,12 @@ import jdk.jfr.consumer.RecordedFrame;
 import jdk.jfr.consumer.RecordedMethod;
 import jdk.jfr.consumer.RecordedStackTrace;
 import jdk.jfr.consumer.RecordedThread;
+
+import dev.jfrq.core.coll.IdentityObjObjHashMap;
+import dev.jfrq.core.coll.ObjObjHashMap;
+import dev.jfrq.core.jfr.Events;
+import dev.jfrq.core.jfr.Fields;
+import dev.jfrq.core.jfr.Transient;
 
 /**
  * Canonicalises what one pass over a recording reads, and makes reading it cheap.

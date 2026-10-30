@@ -28,14 +28,14 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import jdk.management.jfr.FlightRecorderMXBean;
+import jdk.management.jfr.RecordingInfo;
 
 import dev.jfrq.cli.Args;
 import dev.jfrq.cli.Main;
 import dev.jfrq.core.jfr.Chunks;
 import dev.jfrq.core.util.Bytes;
 import dev.jfrq.core.util.Durations;
-import jdk.management.jfr.FlightRecorderMXBean;
-import jdk.management.jfr.RecordingInfo;
 
 /**
  * {@code jfrq-live}: the loop that works on a running JVM. A live recording cannot be read
@@ -734,7 +734,7 @@ public final class Live {
             case "g" -> 1_000_000_000L;
             default -> 1_000_000_000_000L;
         };
-        long n;
+        final long n;
         try {
             n = Long.parseLong(m.group(1));
         } catch (final NumberFormatException e) {

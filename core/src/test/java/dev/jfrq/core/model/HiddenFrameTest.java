@@ -3,22 +3,23 @@
 
 package dev.jfrq.core.model;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import jdk.jfr.consumer.RecordedEvent;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.jfrq.core.jfr.Events;
 import dev.jfrq.core.jfr.JfrFixtures;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.Transient;
-import jdk.jfr.consumer.RecordedEvent;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A lambda frame read from a real recording, through the {@link Interner}: it keeps the

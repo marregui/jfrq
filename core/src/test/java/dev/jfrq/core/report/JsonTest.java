@@ -3,16 +3,13 @@
 
 package dev.jfrq.core.report;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
@@ -28,7 +25,11 @@ import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
 import dev.jfrq.core.stalls.Timeline.PauseKind;
 import dev.jfrq.core.util.Glob;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@code --json} read back as a program reads it, through {@link JsonParser}: the writer's

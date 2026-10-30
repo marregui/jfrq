@@ -3,15 +3,13 @@
 
 package dev.jfrq.core.report;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
@@ -23,7 +21,10 @@ import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.util.Glob;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The HTML and JSON of what {@code health} and {@code info} gained: native memory, the

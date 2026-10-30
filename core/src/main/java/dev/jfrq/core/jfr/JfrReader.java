@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import jdk.jfr.EventType;
+import jdk.jfr.consumer.EventStream;
+import jdk.jfr.consumer.RecordedEvent;
 
 import dev.jfrq.core.coll.IdentityObjObjHashMap;
 import dev.jfrq.core.coll.LongObjHashMap;
@@ -25,9 +28,6 @@ import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.util.Durations;
-import jdk.jfr.EventType;
-import jdk.jfr.consumer.EventStream;
-import jdk.jfr.consumer.RecordedEvent;
 
 /**
  * One streaming pass over a recording that feeds every event to the sinks interested in
@@ -390,7 +390,7 @@ public final class JfrReader {
         private Dispatch resolve(final EventType type, int index) {
             final String name = type.getName();
             final int byNameIndex = byName.keyIndex(name);
-            Dispatch dispatch;
+            final Dispatch dispatch;
             if (byNameIndex < 0) {
                 dispatch = byName.valueAtQuick(byNameIndex);
             } else {

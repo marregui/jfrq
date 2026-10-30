@@ -3,17 +3,18 @@
 
 package dev.jfrq.core.stalls;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
-
 import java.util.List;
+
+import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Timeline.Block;
 import dev.jfrq.core.stalls.Timeline.BlockKind;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 /** The holder walk-back on hand-built monitor waits; times in milliseconds. */
 class HoldersTest {
