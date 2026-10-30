@@ -293,7 +293,7 @@ in order of effect:
 
 ### 5.1 The per-event path
 
-`CODING-GUIDELINES.md` applies to everything that runs per event: the reader
+The hot-path rules of the coding standard (`CODING-GUIDELINES.md` §2) apply to everything that runs per event: the reader
 resolves an `EventType` object once (by identity) to its name, its `int` tag, its
 counter and its sinks, so no string is hashed per event; the interner's value tables are
 probed with a frame's components and a stack's frame buffer, so a hit allocates nothing;
