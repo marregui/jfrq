@@ -390,7 +390,7 @@ public final class JfrReader {
         private Dispatch resolve(final EventType type, int index) {
             final String name = type.getName();
             final int byNameIndex = byName.keyIndex(name);
-            final Dispatch dispatch;
+            Dispatch dispatch;
             if (byNameIndex < 0) {
                 dispatch = byName.valueAtQuick(byNameIndex);
             } else {
