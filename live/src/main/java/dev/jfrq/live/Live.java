@@ -734,7 +734,7 @@ public final class Live {
             case "g" -> 1_000_000_000L;
             default -> 1_000_000_000_000L;
         };
-        final long n;
+        long n;
         try {
             n = Long.parseLong(m.group(1));
         } catch (final NumberFormatException e) {

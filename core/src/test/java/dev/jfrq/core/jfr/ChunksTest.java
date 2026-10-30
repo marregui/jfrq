@@ -144,7 +144,7 @@ class ChunksTest {
             // while the chunk stays open; a copy taken then is the interesting one.
             JfrFixtures.sleep(1_500);
             final Path repository = Path.of(System.getProperty("jdk.jfr.repository"));
-            final Path chunk;
+            Path chunk;
             try (final var files = Files.list(repository)) {
                 chunk = files.filter(f -> f.toString().endsWith(".jfr"))
                         .max(Comparator.comparingLong(f -> f.toFile().lastModified())).orElseThrow();

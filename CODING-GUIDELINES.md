@@ -1,12 +1,12 @@
 # Coding guidelines
 
-jfrq follows the [Java Coding Standard v2.0.0](https://github.com/marregui/java-standard/blob/v2.0.0/STANDARD.md). The
+jfrq follows the [Java Coding Standard v2.0.1](https://github.com/marregui/java-standard/blob/v2.0.1/STANDARD.md). The
 rules live there and are cited by ID (`G-<section>.<n>`); this file is jfrq's Apply section (§12 of the standard), its
 parts in the standard's order, and does not restate them.
 
 ## 1. Version
 
-[v2.0.0](https://github.com/marregui/java-standard/blob/v2.0.0/STANDARD.md), on JDK 25 (Temurin; the Gradle toolchain
+[v2.0.1](https://github.com/marregui/java-standard/blob/v2.0.1/STANDARD.md), on JDK 25 (Temurin; the Gradle toolchain
 of every module, `.sdkmanrc`). Its rule IDs are the ones this repository's code and comments cite.
 
 ## 2. Hot paths
@@ -18,12 +18,11 @@ else; the report objects and the text, HTML and JSON writers are final reporting
 
 ## 3. Applied
 
-Per-event path 2026-09-18; G-10.2 to every module 2026-09-21; v2.0.0 2026-10-30. Enforced by the build:
-`-Xlint:all -Werror` and doclint (G-10.10); the standard's Checkstyle configuration at v2.0.0
+Per-event path 2026-09-18; G-10.2 to every module 2026-09-21; v2.0.1 2026-10-30. Enforced by the build:
+`-Xlint:all -Werror` and doclint (G-10.10); the standard's Checkstyle configuration at v2.0.1, unchanged
 (`config/checkstyle/checkstyle.xml`, `projectPackagePattern` `^dev\.jfrq\.`): `UnusedImports`, `AvoidStarImport` and
-`CustomImportOrder` (G-10.11), `NeedBraces` (G-10.8), `FinalLocalVariable` (G-10.2), with `FinalParameters` left out
-because it also reports parameters reassigned in the body, which G-10.2 exempts; JaCoCo floors (85 % `core`, 80 %
-`cli` and `live`).
+`CustomImportOrder` (G-10.11), `NeedBraces` (G-10.8), `FinalLocalVariable` on locals, enhanced-`for` variables, catch
+parameters and parameters (G-10.2); JaCoCo floors (85 % `core`, 80 % `cli` and `live`).
 
 - Primitive collections in `core/coll` (`ObjObjHashMap`, `IdentityObjObjHashMap`, `ObjLongHashMap`,
   `LongObjHashMap`, `ObjHashSet`, `ObjList`, `LongList`), with the `keyIndex()` sign convention, backward-shift
@@ -32,8 +31,8 @@ because it also reports parameters reassigned in the body, which G-10.2 exempts;
 - Reuse: `of()` on the scratch objects, `clear()` per candidate, interner tables probed with raw components so a hit
   allocates nothing; `int` event tags resolved once per event type.
 - G-10.2 on main and test sources: 1901 declarations gained `final` (2026-09-21, a javac-tree rewriter, verified by
-  the build and a second run reporting nothing left), three more on 2026-10-30 when Checkstyle took the check over.
-  A bare local or parameter is reassigned below.
+  the build and a second run reporting nothing left); Checkstyle has checked it since 2026-10-30. A bare local or
+  parameter is reassigned below, or, for a local, assigned once after a declaration without an initialiser.
 - G-10.11 (2026-10-30): JDK, third-party and project groups, static imports last; 50 files reordered.
 - G-10.5: test methods are named for the behaviour they prove.
 - G-5.7: no caller derives meaning from an exception's message text.

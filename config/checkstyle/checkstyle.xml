@@ -1,8 +1,7 @@
 <?xml version="1.0"?>
 <!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
         "https://checkstyle.org/dtds/configuration_1_3.dtd">
-<!-- The checks of the Java Coding Standard v2.0.0 that javac cannot make (STANDARD.md, rule IDs beside each),
-     from the standard's config/checkstyle/checkstyle.xml at v2.0.0, less FinalParameters (below).
+<!-- The checks of the Java Coding Standard that javac cannot make (STANDARD.md, rule IDs beside each).
      One property is set per repository, from its Apply section (Gradle: checkstyle { configProperties = [...] }):
        projectPackagePattern  required: the project's own packages, e.g. ^dev\.example\.  (G-10.11; without it
                               the project's imports count as third-party and their separate group is reported)
@@ -28,12 +27,18 @@
         </module>
         <!-- G-10.8: braces always -->
         <module name="NeedBraces"/>
-        <!-- G-10.2: final on locals, enhanced-for variables and parameters never reassigned
-             (catch parameters and try-with-resources variables are left to review) -->
+        <!-- G-10.2: final on locals, enhanced-for variables, catch parameters and method and constructor parameters
+             never reassigned; a parameter that is reassigned, and the parameters of a method without a body, are not
+             reported (FinalParameters, used until 2.0.1, reported every parameter without final). try-with-resources
+             variables are left to review. -->
         <module name="FinalLocalVariable">
             <property name="validateEnhancedForLoopVariable" value="true"/>
+            <property name="tokens" value="VARIABLE_DEF,PARAMETER_DEF"/>
         </module>
-        <!-- FinalParameters, in the standard's v2.0.0 configuration, is left out: it reports every parameter without
-             final, including one reassigned in the body, which G-10.2 exempts (probe(…, int index), mix(long x)). -->
+        <!-- G-10.2: a local declared without an initialiser and assigned later stays bare -->
+        <module name="SuppressionXpathSingleFilter">
+            <property name="checks" value="FinalLocalVariable"/>
+            <property name="query" value="//SLIST/VARIABLE_DEF[not(ASSIGN)]/IDENT"/>
+        </module>
     </module>
 </module>
