@@ -39,6 +39,8 @@ import dev.jfrq.core.util.Bytes;
  * @param support    how many samples stand behind each row: a rate built on a handful of
  *                   them is noise, and a percentage printed next to it reads as a finding
  * @param virtualFirsts the first samples of virtual threads left out of the estimate; see {@link #warnings()}
+ * @param carrierHistory later samples of virtual threads left out because each outweighs every thread's counted
+ *                   allocation in the recording, so its carrier's history reaches back before it; see {@link #warnings()}
  * @param estimatedWhileCounted per name in {@code countedByThread}, the estimate over the same stretch as
  *                   the counter, so the two compare like for like; {@code null} for the whole-file
  *                   estimate of those names, which is what a report built by hand has
@@ -57,6 +59,7 @@ public record AllocationReport(
         Map<String, Map<Stack, Long>> siteByThread,
         Support support,
         Dropped virtualFirsts,
+        Dropped carrierHistory,
         Map<String, Long> estimatedWhileCounted) {
 
     /**
@@ -83,7 +86,7 @@ public record AllocationReport(
             final Map<String, Map<String, Long>> classByThread, final Map<String, Map<Stack, Long>> siteByThread,
             final Support support, final Dropped virtualFirsts) {
         this(info, source, totalBytes, samples, events, countedByThread, byThread, byClass, bySite, classByThread,
-                siteByThread, support, virtualFirsts, null);
+                siteByThread, support, virtualFirsts, Dropped.NONE, null);
     }
 
     /** A report with no virtual-thread samples, or from events that have no history to drop. */
@@ -93,7 +96,7 @@ public record AllocationReport(
             final Map<String, Map<String, Long>> classByThread, final Map<String, Map<Stack, Long>> siteByThread,
             final Support support) {
         this(info, source, totalBytes, samples, events, countedByThread, byThread, byClass, bySite, classByThread,
-                siteByThread, support, Dropped.NONE, null);
+                siteByThread, support, Dropped.NONE, Dropped.NONE, null);
     }
 
     /**
@@ -148,20 +151,30 @@ public record AllocationReport(
      *
      * <p>A virtual thread's sample is weighed by its carrier's allocation since the carrier
      * was last sampled, which for a carrier's first sample in the recording reaches back
-     * before it. The collector drops every virtual thread's first sample, so allocation on
-     * virtual threads is mostly missing, and the line says how much was left out. It also
-     * says the opposite error remains: a virtual thread that moved to a carrier not yet
-     * sampled carries that carrier's history on a later sample, which is kept.
+     * before it. The collector drops every virtual thread's first sample, and every later one
+     * heavier than all the allocation the threads' counters saw, so allocation on virtual
+     * threads is mostly missing, and the line says how much was left out. It also says the
+     * opposite error remains: carrier history under that bound, on a later sample, is kept.
      */
     public List<String> warnings() {
-        return virtualFirsts.samples() == 0 ? List.of() : List.of(virtualWarning(virtualCounts()));
+        return virtualFirsts.samples() == 0 && carrierHistory.samples() == 0
+                ? List.of() : List.of(virtualWarning(virtualCounts()));
     }
 
-    /** {@code 42 first samples of virtual threads, 40.9 MB}, or {@code none} when there were none. */
+    /**
+     * {@code 42 first samples of virtual threads, 40.9 MB}, then {@code and 2 later ones heavier than the
+     * recording's counted allocation, 7.60 GB} when there were such, or {@code none} when there were neither.
+     */
     String virtualCounts() {
         final long n = virtualFirsts.samples();
-        return n == 0 ? "none" : n + " first sample" + (n == 1 ? "" : "s") + " of virtual threads, "
+        final long h = carrierHistory.samples();
+        if (n == 0 && h == 0) {
+            return "none";
+        }
+        final String firsts = n + " first sample" + (n == 1 ? "" : "s") + " of virtual threads, "
                 + Bytes.format(virtualFirsts.bytes());
+        return h == 0 ? firsts : firsts + ", and " + h + " later one" + (h == 1 ? "" : "s")
+                + " heavier than the recording's counted allocation, " + Bytes.format(carrierHistory.bytes());
     }
 
     /**
@@ -170,7 +183,7 @@ public record AllocationReport(
      * threads. The virtual threads' first samples have a warning of their own.
      */
     public String droppedNote() {
-        final long platform = events - samples - virtualFirsts.samples();
+        final long platform = events - samples - virtualFirsts.samples() - carrierHistory.samples();
         if (platform <= 0) {
             return "";
         }
@@ -183,7 +196,8 @@ public record AllocationReport(
         return "allocation on virtual threads is under-counted, and can still be over-counted: " + counts
                 + ", not counted, because a sample is weighed by its carrier's allocation since the carrier was last "
                 + "sampled, which can reach back before the recording; a virtual thread that moved to a carrier not "
-                + "yet sampled carries that history on a later sample (docs/design/alloc.md)";
+                + "yet sampled carries that history on a later sample, kept when it weighs less than the recording's "
+                + "counted allocation (docs/design/alloc.md)";
     }
 
     public double seconds() {
