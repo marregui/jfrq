@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.ToLongFunction;
+import jdk.jfr.consumer.RecordedEvent;
 
 import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
@@ -34,7 +35,6 @@ import dev.jfrq.core.stalls.Timeline.Sample;
 import dev.jfrq.core.stalls.Timeline.ThreadTimeline;
 import dev.jfrq.core.util.ClassNames;
 import dev.jfrq.core.util.Sorts;
-import jdk.jfr.consumer.RecordedEvent;
 
 /**
  * Builds {@link ThreadTimeline}s for the threads matching a filter, plus the JVM-wide

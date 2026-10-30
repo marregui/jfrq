@@ -3,13 +3,14 @@
 
 package dev.jfrq.core.stalls;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.util.Arrays;
 
-import dev.jfrq.core.coll.LongList;
 import org.junit.jupiter.api.Test;
+
+import dev.jfrq.core.coll.LongList;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PerchTest {
 

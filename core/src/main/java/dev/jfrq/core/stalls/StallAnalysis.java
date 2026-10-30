@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.ToLongFunction;
 
+import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.IdentityObjObjHashMap;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.Nulls;
@@ -18,7 +19,6 @@ import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.RecordingInfo;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import jdk.jfr.consumer.RecordedEvent;
 
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.Nulls;
@@ -36,7 +37,6 @@ import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.util.Durations;
 import dev.jfrq.core.util.Sorts;
-import jdk.jfr.consumer.RecordedEvent;
 
 /**
  * Reads what the other commands leave: the garbage collector's own events, the JVM's

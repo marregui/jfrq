@@ -3,12 +3,6 @@
 
 package dev.jfrq.core.jfr;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -21,6 +15,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.ReentrantLock;
+import jdk.jfr.Recording;
+import jdk.jfr.consumer.RecordedEvent;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.jfrq.core.alloc.AllocationCollector;
 import dev.jfrq.core.alloc.AllocationReport;
@@ -32,16 +31,18 @@ import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.IdleMatcher;
-import dev.jfrq.core.stalls.Stall.Verdict;
 import dev.jfrq.core.stalls.Stall;
+import dev.jfrq.core.stalls.Stall.Verdict;
 import dev.jfrq.core.stalls.StallCollector;
 import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline;
 import dev.jfrq.core.util.Glob;
-import jdk.jfr.Recording;
-import jdk.jfr.consumer.RecordedEvent;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end through real JFR files: each test records a known pathology in-process and

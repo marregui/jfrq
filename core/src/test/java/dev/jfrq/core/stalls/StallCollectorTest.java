@@ -3,11 +3,6 @@
 
 package dev.jfrq.core.stalls;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
-
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
@@ -20,6 +15,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
+import jdk.jfr.Recording;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.jfrq.core.jfr.JfrFixtures;
 import dev.jfrq.core.jfr.JfrReader;
@@ -28,9 +27,11 @@ import dev.jfrq.core.locks.ContentionCollector;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.stalls.Stall.Verdict;
 import dev.jfrq.core.util.Glob;
-import jdk.jfr.Recording;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * {@link StallCollector} on real recordings, for the answers that depend on threads the

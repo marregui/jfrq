@@ -3,13 +3,14 @@
 
 package dev.jfrq.core.alloc;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
 import java.util.List;
+
+import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Stack;
-import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SiteKeyTest {
 

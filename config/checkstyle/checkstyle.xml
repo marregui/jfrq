@@ -1,14 +1,39 @@
 <?xml version="1.0"?>
 <!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
         "https://checkstyle.org/dtds/configuration_1_3.dtd">
-<!-- One rule, for what javac's -Xlint cannot see: an import nothing uses. A name used only in
-     Javadoc ({@link}) counts as used. The style rules live in the Java Coding Standard (G-10.11). -->
+<!-- The checks of the Java Coding Standard v2.0.0 that javac cannot make (STANDARD.md, rule IDs beside each),
+     from the standard's config/checkstyle/checkstyle.xml at v2.0.0, less FinalParameters (below).
+     One property is set per repository, from its Apply section (Gradle: checkstyle { configProperties = [...] }):
+       projectPackagePattern  required: the project's own packages, e.g. ^dev\.example\.  (G-10.11; without it
+                              the project's imports count as third-party and their separate group is reported)
+     Checked with Checkstyle 14.3.0. -->
 <module name="Checker">
     <property name="charset" value="UTF-8"/>
     <property name="severity" value="error"/>
     <module name="TreeWalker">
+        <!-- G-10.11: an import nothing uses; a name used only in Javadoc ({@link}) counts as used -->
         <module name="UnusedImports">
             <property name="processJavadoc" value="true"/>
         </module>
+        <!-- G-10.11: no wildcards -->
+        <module name="AvoidStarImport"/>
+        <!-- G-10.11: JDK, then third-party, then the project's own, then static imports, each sorted -->
+        <module name="CustomImportOrder">
+            <property name="customImportOrderRules"
+                      value="STANDARD_JAVA_PACKAGE###THIRD_PARTY_PACKAGE###SPECIAL_IMPORTS###STATIC"/>
+            <property name="standardPackageRegExp" value="^(java|javax|jdk|com\.sun)\."/>
+            <property name="specialImportsRegExp" value="${projectPackagePattern}" default="^$"/>
+            <property name="sortImportsInGroupAlphabetically" value="true"/>
+            <property name="separateLineBetweenGroups" value="true"/>
+        </module>
+        <!-- G-10.8: braces always -->
+        <module name="NeedBraces"/>
+        <!-- G-10.2: final on locals, enhanced-for variables and parameters never reassigned
+             (catch parameters and try-with-resources variables are left to review) -->
+        <module name="FinalLocalVariable">
+            <property name="validateEnhancedForLoopVariable" value="true"/>
+        </module>
+        <!-- FinalParameters, in the standard's v2.0.0 configuration, is left out: it reports every parameter without
+             final, including one reassigned in the body, which G-10.2 exempts (probe(…, int index), mix(long x)). -->
     </module>
 </module>

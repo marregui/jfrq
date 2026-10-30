@@ -16,10 +16,10 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-
-import dev.jfrq.core.util.Durations;
 import jdk.management.jfr.FlightRecorderMXBean;
 import jdk.management.jfr.RecordingInfo;
+
+import dev.jfrq.core.util.Durations;
 
 /**
  * One dump of a window of a running recording, the way {@code jcmd JFR.dump} does it:

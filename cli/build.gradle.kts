@@ -72,9 +72,10 @@ tasks.javadoc {
     }
 }
 
-// Unused imports, which -Xlint does not report: Checkstyle with that one rule, over every source set.
+// What -Xlint cannot check: the Java Coding Standard v2.0.0 Checkstyle configuration, over every source set.
 checkstyle {
     toolVersion = libs.versions.checkstyle.get()
     configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+    configProperties = mapOf("projectPackagePattern" to "^dev\\.jfrq\\.")
     maxWarnings = 0
 }

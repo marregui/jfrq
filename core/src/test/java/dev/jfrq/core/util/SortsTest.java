@@ -3,14 +3,15 @@
 
 package dev.jfrq.core.util;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.util.List;
 import java.util.Random;
 
-import dev.jfrq.core.coll.LongList;
 import org.junit.jupiter.api.Test;
+
+import dev.jfrq.core.coll.LongList;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SortsTest {
 
