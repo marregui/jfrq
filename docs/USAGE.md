@@ -40,7 +40,9 @@ JVM options go in `JFRQ_OPTS` (`jfrq`) or `JFRQ_LIVE_OPTS` (`jfrq-live`):
 ```
 jfrq info   recording.jfr [--thread GLOB [--top N]] [--html out.html] [--json]
 jfrq health recording.jfr [more.jfr ...] [--top N] [--html out.html] [--json]
-jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--top N] [--html out.html] [--json]
+jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--sites N] [--top N] [--html out.html] [--json]
+jfrq procs  recording.jfr [--app PREFIX] [--top N] [--html out.html] [--json]
+jfrq waits  recording.jfr [--thread GLOB] [--monitor GLOB] [--app PREFIX] [--top N] [--html out.html] [--json]
 jfrq alloc  recording.jfr [--baseline before.jfr] [--top N] [--sites] [--app PREFIX] [--html out.html] [--json]
 jfrq locks  recording.jfr [--min 10ms] [--thread GLOB] [--lock GLOB] [--idle REGEX,...] [--by-site] [--top N] [--html out.html] [--json]
 jfrq stalls recording.jfr --thread GLOB [--gap 50ms] [--idle REGEX,...] [--app PREFIX] [--top N] [--html out.html] [--json]
@@ -139,10 +141,63 @@ as the sampler saw it. Threads in native code (`jdk.NativeMethodSample`) are not
   the samples' span is widened to the smallest multiple of it that fits, and the heading says
   the width used.
 
-Four sites per family and three frames below each are listed; the rest are summed on one
-line. `--top` bounds the families and the leaf methods (in JSON, every list).
+`--sites N` sites per family (default 4) and three frames below each are listed; the rest
+are summed on one line, which names `--sites`. `--top` bounds the families and the leaf
+methods (in JSON, every list, the sites included).
 
-## 8. `alloc`
+## 8. `procs`
+
+`procs` answers which processes the JVM started, from `jdk.ProcessStart`, which the
+`default` and `profile` settings record with a stack and without a threshold: every start
+is in the file.
+
+- **By command**: a command is the basename of the first whitespace-separated word of the
+  command line, quotes stripped, so `/usr/bin/git -C repo status` is `git`. The arguments
+  are not part of the key: they carry paths and ids that would make each start its own row.
+  Each row has its starts, the rate per minute over the recording's span, the thread
+  families that started it, the sites that started it (the innermost frame outside the
+  JDK, or under `--app`'s prefixes, as `alloc --app` chooses it) and one example command
+  line: the earliest, cut to 100 characters (whole in JSON).
+- **By thread family**: the starts by the family of the starting thread (the fold `info`
+  and `hot` use), with its threads and the commands it started.
+
+Three families and three sites are listed per command and three commands per family; the
+rest are summed on one entry. `--top` bounds the rows of both tables (in JSON, every list).
+
+## 9. `waits`
+
+`waits` answers what threads waited on in `Object.wait` and `LockSupport.park`, from the
+waiting thread's side: `jdk.JavaMonitorWait` by the monitor's class and `jdk.ThreadPark` by
+the blocker's class, each row naming its event (`wait` or `park`) with its total time, count
+and longest wait. A park with no blocker (`LockSupport.parkNanos`) is `(no blocker)`. The
+thread that notified a wait is not used.
+
+- `--thread GLOB`: only waits by these threads (default: every thread).
+- `--monitor GLOB`: only waits on these classes, by JVM name or as printed:
+  `'*QueueFlusher'`, `'*ReentrantLock*'`, `'byte[]'`, `'(no blocker)'`.
+- `--app PREFIX`: the site rule, as `hot --app`.
+
+Each class is split by site and, under each site, by the frame below it, the rule `hot`
+uses: the outermost frame outside the JDK under the site, else the frame the site called.
+The `Thresholds` line prints the events' thresholds: a wait shorter than its threshold is
+not in the file (`20 ms` in `default`, `10 ms` in `profile`), so the totals are those of
+the waits above it. A wait that crosses an end of the recording counts only the part inside
+it. `--top` bounds the classes and the sites per class; three frames are listed below each
+site (in JSON, `--top` of each).
+
+To split by a library's frame, name its package in `--app`, a JDK package included. On a
+Swing application on macOS Metal, the event thread's waits on the render queue's flusher:
+
+```
+jfrq waits d-1257.jfr --thread 'AWT-EventQueue-*' --monitor '*QueueFlusher' --app javax.swing.text.html
+```
+
+measured 25.3 s across 1,137 waits, 19.0 s of them in 829 waits under
+`javax.swing.text.html.CSSBorder$SolidPainter.paint`, with `Graphics.fillPolygon` below it.
+Without `--app` the same 1,030 waits sit under the look-and-feel's
+`FlatEditorPaneUI.paintSafely`, the innermost frame outside the JDK.
+
+## 10. `alloc`
 
 `alloc --sites` ranks one row per allocating method — the innermost frame outside the JDK
 — so every path that reaches it is summed instead of ranked separately; the row says how
@@ -158,7 +213,7 @@ lambdas (`com.example.Handler$Inner`) but not `com.example.HandlerFactory`.
 `--baseline before.jfr` compares two recordings: what changed between the recording
 before the fix and the one after.
 
-## 9. `locks` and `stalls`
+## 11. `locks` and `stalls`
 
 `locks --by-site` does for lock instances what `alloc --sites` does for allocations:
 fifteen queues of the same kind become one row of fifteen instances, ranked across all of
@@ -198,6 +253,14 @@ frames, so no sample is idle: a loop sitting in its selector counts as working.
 blocking event, exact to its timestamps; `[samples]` means a run of sampler observations;
 `[silence]` means an absence of samples explained by what covered it.
 
+**Seen running meanwhile.** A park on a lock names no holder, and a monitor's holder can be
+unknown. Under such a stall, `stalls` lists up to three other threads, watched or not, that
+the sampler saw running while it lasted, most Java samples first, each with its sample counts
+and the innermost frame most of them had (and the site, under `--app`). Samples in a native
+wait that runs nothing (an accept, a socket poll, a wait for a child process, a blocking
+read, a sleep) do not count. The list is labelled a correlation, never a holder, and a stall
+with no such sample has no list ([design/stalls.md, section 6](design/stalls.md#6-who-ran-meanwhile)).
+
 **Unseen.** Anything a blocking event or a pause event explains is exact; anything that
 rests on samples alone is only as good as the sampling cadence. `jfrq` measures that
 cadence per thread, and `stalls` opens with an `Unseen` line when it is too coarse:
@@ -205,7 +268,7 @@ first, in one line, how short a stall no event explains can be and still go unse
 threads you asked about; then, in an `UNSEEN` section that closes the report, whether the sampler's pace or the thread's own
 absences are why, and the sampling period that would help.
 
-## 10. `health`
+## 12. `health`
 
 `health` reads what the other commands leave: the collector's own events, the JVM's
 once-a-second statistics and the throwables it created.
@@ -254,7 +317,36 @@ cluster, or a JVM's successive runs): span, findings, GC time, heap after GC flo
 resident set, live threads, threads started, the JVM's and the threads' CPU, and
 throwables per second, then each recording's findings under its name.
 
-## 11. A killed JVM
+## 13. jfrq-live watch, histo and growth
+
+```
+jfrq-live <pid> watch --every D --for D [--sample 60s] [--histo] [--ask 'QUESTION' ...] [--out DIR] [--recording ID|NAME] [--state DIR]
+jfrq-live <pid> histo [--out FILE]
+jfrq-live growth H1 H2 [H3 ...] [--top N]
+```
+
+`watch` follows a JVM for `--for` and exits by itself, in one process over one JMX
+connection. Every `--every` it takes a window, a `delta` dump into `wNN-HHmm.jfr` (a
+`full` one when the JVM has no cursor yet), and runs each `--ask` question on it into
+`wNN-HHmm.<command>.txt`; every `--sample` it writes a row of the JVM's CPU, heap, threads,
+open file descriptors and committed virtual memory to `samples.tsv`; with `--histo` it
+takes a class histogram at the start and after each window, each one a full GC in the JVM.
+It ends with a summary table, a row per window, on standard output and in `summary.txt`.
+`--out` is a new or empty directory (default `watch-<pid>-<yyyyMMdd-HHmm>`, UTC).
+
+```
+jfrq-live 4242 watch --every 30m --for 2h --histo --ask health --ask 'hot --app com.example'
+```
+
+`histo` prints the JVM's class histogram as `jcmd <pid> GC.class_histogram` does, or
+writes it to `--out`. `growth` reads two or more such histograms, oldest first, and lists
+the classes whose instances and bytes both grew from each to the next, then, in a second
+table, those whose bytes grew at every step while their instances did not (larger arrays
+or buffers), each with its counts in every file, ranked by byte growth. Each dump also
+holds 128 KiB in the target for 400 minutes, a JDK behaviour. Mechanics, the sample columns,
+the cost of `--histo` and of each dump: [LIVE.md, section 7](LIVE.md#7-watching-a-jvm-for-a-while-watch-histo-growth).
+
+## 14. A killed JVM
 
 A JVM that was killed leaves its repository directory of chunk files rather than a
 recording, and `jfrq` given that directory (or the `repository=` one above it) says what
@@ -263,7 +355,7 @@ writing, is unfinished and unreadable by any reader; `jfrq` then names the size 
 `out.jfr` to so it holds only the finished ones. A repository of a single chunk holds
 nothing readable.
 
-## 12. Exit status
+## 15. Exit status
 
 | Status | When |
 |---|---|

@@ -225,6 +225,43 @@ class StallCollectorTest {
         assertTrue(stuckToTheEnd(report), report.stalls().toString());
     }
 
+    /// A park on a lock nobody is recorded holding names the unwatched thread that burned CPU
+    /// while holding it, as a thread seen meanwhile, and never as its holder.
+    @Test
+    void aParkOnALockNamesTheUnwatchedThreadThatRanMeanwhile() throws Exception {
+        final ReentrantLock lock = new ReentrantLock();
+        final Path file = JfrFixtures.record(dir, "meanwhile", r -> {
+            parks(r);
+            r.enable("jdk.ExecutionSample").withPeriod(Duration.ofMillis(10));
+        }, () -> {
+            final CountDownLatch held = new CountDownLatch(1);
+            final Thread holder = new Thread(() -> {
+                lock.lock();
+                try {
+                    held.countDown();
+                    JfrFixtures.burn(400);
+                } finally {
+                    lock.unlock();
+                }
+            }, "lock-holder");
+            holder.start();
+            await(held);
+            final Thread waiter = new Thread(() -> {
+                lock.lock();
+                lock.unlock();
+            }, "lock-waiter");
+            waiter.start();
+            waiter.join();
+            holder.join();
+        });
+        final StallReport r = stalls(file, "lock-waiter");
+        final Stall park = r.stalls().getFirst();
+        assertEquals(Verdict.PARKED, park.verdict(), r.stalls().toString());
+        assertFalse(park.detail().contains("lock-holder"), park.detail());
+        assertTrue(park.meanwhile().stream().anyMatch(m -> m.thread().name().equals("lock-holder")
+                && m.javaSamples() > 0 && m.frame().endsWith("burn")), park.meanwhile().toString());
+    }
+
     private StallReport stuckRecording(final String name) throws Exception {
         final Object lock = new Object();
         final CountDownLatch held = new CountDownLatch(1);

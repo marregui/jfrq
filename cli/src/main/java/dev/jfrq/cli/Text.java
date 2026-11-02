@@ -23,6 +23,7 @@ import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.report.RecordingSummary;
 import dev.jfrq.core.report.ThreadCensus;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Perch;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
@@ -1007,6 +1008,12 @@ final class Text {
             sb.append(String.format(Locale.ROOT, "  %2d  %-22s %s  %8s  %-15s %s%s\n", row, s.thread().name(),
                     Durations.at(s.start(), r.info().startNanos()), Durations.format(s.duration()),
                     s.verdict(), s.detail(), evidence(s)));
+            if (!s.meanwhile().isEmpty()) {
+                sb.append("        ").append(Meanwhile.LABEL).append(":\n");
+                for (final Meanwhile m : s.meanwhile()) {
+                    sb.append("          ").append(m.describe()).append('\n');
+                }
+            }
             final String stack = s.stack().pretty("        ", STACK_FRAMES);
             if (stack.isEmpty()) {
                 continue;

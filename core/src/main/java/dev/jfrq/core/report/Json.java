@@ -24,6 +24,7 @@ import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.procs.ProcessReport;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
@@ -398,6 +399,18 @@ public final class Json {
         w.name("detail").value(s.detail());
         w.name("samples").value(s.samples());
         stack(w, s.stack());
+        w.name("meanwhile").array();
+        for (final Meanwhile m : s.meanwhile()) {
+            w.object();
+            w.name("thread").value(m.thread().name());
+            w.name("javaSamples").value(m.javaSamples());
+            w.name("nativeSamples").value(m.nativeSamples());
+            w.name("frame").value(m.frame());
+            w.name("frameSamples").value(m.frameSamples());
+            w.name("site").value(m.site());
+            w.end();
+        }
+        w.end();
         w.end();
     }
 

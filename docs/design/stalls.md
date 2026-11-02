@@ -7,6 +7,7 @@ Part of the [design](README.md). How `stalls` decides when a thread did not retu
 - [3. Sampling cadence is measured, not assumed](#3-sampling-cadence-is-measured-not-assumed)
 - [4. Pauses](#4-pauses)
 - [5. Merging and reporting](#5-merging-and-reporting)
+- [6. Who ran meanwhile](#6-who-ran-meanwhile)
 
 The question is "why was this event loop not at its selector between t1 and t2", and
 the answer is assembled from three kinds of evidence with different reliability.
@@ -355,3 +356,87 @@ of `jdk.SocketWrite` events in the file beside them — a recording that streame
 can hold sixteen, because an HTTP stack that buffers its own writes produces none, and a
 gap on a thread that was writing a response is then all the evidence there is. Both kinds
 still count in `BY VERDICT` and in the per-thread totals.
+
+## 6. Who ran meanwhile
+
+A `jdk.ThreadPark` names the thread that parked and the object it parked on, never the
+thread that held it. A Swing event thread parked 1.01 s on a `ReentrantLock` in a 30-minute
+window of a macOS application, and the report said `parked on
+java.util.concurrent.locks.ReentrantLock$NonfairSync@7003c34340` and nothing more; the
+thread holding the render lock was found by joining the samples of the other threads in that
+second by hand. A monitor enter can be in the same place: when the event's `previousOwner` is
+empty and no other thread's wait names a holder ([locks.md](locks.md)), the detail reads
+`held by unknown`.
+
+For those stalls, a park on an object and a monitor enter held by nobody known, the report
+lists up to three other threads the sampler saw running while the stall lasted, each with its
+Java and native sample counts in the stall and the innermost frame most of those samples had
+(and the site, under `--app`):
+
+```
+seen running meanwhile (a correlation, not a recorded holder):
+  AppKit Thread: 7 native samples, all in sun.java2d.metal.MTLLayer.blitTexture
+```
+
+It is a correlation in time and is labelled as one, apart from the detail: a thread that ran
+while the lock was held need not be the one holding it. A stall whose holder the recording
+names keeps it alone. A park on no object has nothing anyone holds, and a sleep, a wait or a
+blocking read is the thread's own, so none of them gets the list.
+
+**Which samples count.** The sampler's one native slot goes round every thread in native
+code ([section 3](#3-sampling-cadence-is-measured-not-assumed)), and most of those threads are
+waiting. In that window 145,504 native samples were taken: 55,290 in
+`ProcessHandleImpl.waitForProcessExit0`, 55,061 in `FileInputStream.readBytes`, 13,768 in
+`Net.accept`, 13,763 in `KQueue.poll`, and 7,127 in `MTLLayer.blitTexture`, the one thread
+doing work. Inside the 1.01 s park, `RMI TCP Accept-0` had 8 samples in `Net.accept`, one
+subprocess pipe reader 8 and four more 7 each in `FileInputStream.readBytes`, four process
+reapers 7 each, `HTTP-Dispatcher` 7 in `KQueue.poll`, and `AppKit Thread` 7 in
+`MTLLayer.blitTexture`; counted as they come, which `--idle none` does, the list reads
+`RMI TCP Accept-0`, `AppKit Thread`, `HTTP-Dispatcher`, and the render thread is in it only by
+the order of names. So a sample of another thread is
+idle when one of its innermost three frames is a default idle point of
+[section 1](#1-idle-detection), a frame `--idle` names, or a native wait that runs nothing: a
+sleep, an accept or a socket poll, a wait for a child process. A blocking read of a pipe, a
+file or a socket (`FileInputStream.readBytes`, `SocketDispatcher.read0`) is idle too. For a
+watched thread such a read is a stall with an event of its own, at the top of the evidence in
+[section 2](#2-evidence); for another thread it is waiting for data from outside the JVM and
+runs nothing, and if it held the lock through the read, the sample cannot tell that thread
+from every other reader. Counted, the five pipe readers above would have pushed the render
+thread off a list of three. A write is not idle: data going out can be written under a lock.
+
+Threads rank by Java samples first, since a Java sample is the thread executing, then by
+native samples, then by name. The stalled thread is never in its own list.
+
+**The cadence bounds it.** A thread in native code is sampled once per round of the native
+slot: on that window `RMI TCP Accept-0`, in native code all along, was sampled 13,768 times in
+30m03s, once every 131 ms. A stall shorter than another thread's sampling interval can hold
+no sample of it. A stall with nobody sampled running in it
+prints no line, rather than one saying nobody ran.
+
+**Cost.** Every thread's samples are kept, watched or not: a time and an interned stack per
+sample, appended as it arrives. The lists are put in time order on the first question; a
+thread's samples arrive nearly in order (13,768 samples of one thread were 1,208 insertion
+moves from it), so an insertion sort does it, with a merge sort when that costs more than
+eight moves a sample. A question reads a thread's samples inside the stall until reading them
+has cost as many samples as the thread has, and from then on answers from a running count of
+the samples that are not idle, in two binary searches: a short stall on a narrow `--thread`
+judges only the samples inside it, and minutes-long stalls over hundreds of threads cost one
+pass over their samples. The frames are read only for the three threads named. Median of seven
+interleaved runs, before and after, `--timing`:
+
+| Recording | `--thread` | Analyse before | Analyse after | Parse before | Parse after |
+|---|---|---|---|---|---|
+| 30-minute Swing window, 14 MB | `*` | 262 ms | 267 ms (+2 %) | 346 ms | 343 ms |
+| same | `AWT-EventQueue-*` | 81.5 ms | 85.6 ms (+5 %) | 283 ms | 300 ms |
+| 25-minute server recording, 758 threads, 39 MB | `*` | 156 ms | 170 ms (+9 %) | 449 ms | 432 ms |
+| same | `AWT-EventQueue-*` | 37.7 ms | 39.5 ms (+5 %) | 393 ms | 407 ms |
+
+A version that judged every sample of every thread on the first question, to answer every
+stall from running counts, took the second row from 78.3 ms to 104 ms. One that read every
+thread's samples through every stall, and tallied the frames of each, spent 53 ms of the third
+row's analysis there: 296 park and monitor stalls, each read across 435 threads.
+
+On the 24 reports of `stalls --thread 'AWT-EventQueue-*'` and `--thread '*'` over twelve
+recordings (four 30-minute windows and two more files of that application, six of an Edge
+node), the output is unchanged but for these lines.
+

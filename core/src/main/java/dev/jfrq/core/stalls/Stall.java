@@ -3,6 +3,8 @@
 
 package dev.jfrq.core.stalls;
 
+import java.util.List;
+
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
@@ -18,9 +20,26 @@ import dev.jfrq.core.model.ThreadRef;
  * @param stack    the most representative stack: the blocking event's, or the busiest sample's
  * @param evidence how the interval was found
  * @param samples  sampler observations inside the interval (zero for silent gaps)
+ * @param meanwhile for a park or a monitor enter with no holder in the recording, the other
+ *                 threads seen running during it, most samples first: a correlation, not a holder
  */
 public record Stall(ThreadRef thread, Interval interval, Verdict verdict, String detail, Stack stack,
-                    Evidence evidence, int samples) {
+                    Evidence evidence, int samples, List<Meanwhile> meanwhile) {
+
+    public Stall {
+        meanwhile = List.copyOf(meanwhile);
+    }
+
+    /** A stall with nobody seen running meanwhile, which is every stall until the analysis's last step. */
+    public Stall(final ThreadRef thread, final Interval interval, final Verdict verdict, final String detail,
+                 final Stack stack, final Evidence evidence, final int samples) {
+        this(thread, interval, verdict, detail, stack, evidence, samples, List.of());
+    }
+
+    /** This stall with the threads seen running during it. */
+    public Stall withMeanwhile(final List<Meanwhile> seen) {
+        return new Stall(thread, interval, verdict, detail, stack, evidence, samples, seen);
+    }
 
     public enum Verdict {
         /** The whole JVM was stopped for garbage collection. */

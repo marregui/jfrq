@@ -51,7 +51,10 @@ import dev.jfrq.core.util.Sorts;
  *
  * <p>Every thread's parks are weighed for {@link Perch} and every thread's monitor waits are
  * kept to resolve lock holders, watched or not: both answers depend on what the other
- * threads did, and must not change with {@code --thread}. {@code jdk.ThreadStart} and
+ * threads did, and must not change with {@code --thread}. So is every thread's sample: who ran
+ * while a watched thread waited on a lock with no recorded holder is any thread, and an
+ * unwatched one's sample is a time and an interned stack appended to its
+ * {@link Bystanders.Samples}. {@code jdk.ThreadStart} and
  * {@code jdk.ThreadEnd} bound a watched thread's life inside the recording, so that the
  * stretch before its first sample and after its last can be judged without mistaking a
  * thread's birth or death for a stall.
@@ -121,6 +124,10 @@ public final class StallCollector implements JfrReader.Sink {
 
     private final Predicate<String> threadFilter;
     private final IdleMatcher idle;
+    /** What an idle sample of a thread seen during another's stall looks like: {@link IdleMatcher#forBystanders}. */
+    private final IdleMatcher bystanderIdle;
+    /** Under {@code --app}, what names the site of a thread seen during a stall; {@code null} without it. */
+    private final SiteKey siteKey;
     private final StallAnalysis analysis;
     /** Every thread seen in a thread event, watched or not, with the filter's verdict. */
     private final ObjObjHashMap<ThreadRef, ThreadEvents> threads = new ObjObjHashMap<>(256);
@@ -157,6 +164,8 @@ public final class StallCollector implements JfrReader.Sink {
                           final long gapNanos, final SiteKey culpritKey) {
         this.threadFilter = threadFilter;
         this.idle = idle;
+        this.bystanderIdle = IdleMatcher.forBystanders(idle);
+        this.siteKey = culpritKey == SiteKey.culpritMethod() ? null : culpritKey;
         this.analysis = new StallAnalysis(gapNanos, workWaits, culpritKey);
     }
 
@@ -250,9 +259,24 @@ public final class StallCollector implements JfrReader.Sink {
                 t.ended = Events.startNanos(e);
                 return;
             }
-            // Counted for every thread: how often the sampler saw a thread depends on how many others it saw.
-            case EventKinds.EXECUTION_SAMPLE -> t.javaSamples++;
-            case EventKinds.NATIVE_METHOD_SAMPLE -> t.nativeSamples++;
+            // Kept for every thread: how often the sampler saw a thread depends on how many others
+            // it saw, and who ran while a watched thread waited on a lock is any thread's sample.
+            case EventKinds.EXECUTION_SAMPLE, EventKinds.NATIVE_METHOD_SAMPLE -> {
+                final boolean inNative = kind == EventKinds.NATIVE_METHOD_SAMPLE;
+                if (inNative) {
+                    t.nativeSamples++;
+                } else {
+                    t.javaSamples++;
+                }
+                final long time = Events.startNanos(e);
+                final Stack stack = Events.stack(e, interner);
+                if (t.watched) {
+                    t.samples.add(new Sample(time, stack, idle.isIdle(stack), inNative));
+                } else {
+                    t.otherSamples.add(time, stack, inNative);
+                }
+                return;
+            }
             default -> {
             }
         }
@@ -260,11 +284,6 @@ public final class StallCollector implements JfrReader.Sink {
             return;
         }
         switch (kind) {
-            case EventKinds.EXECUTION_SAMPLE, EventKinds.NATIVE_METHOD_SAMPLE -> {
-                final Stack stack = Events.stack(e, interner);
-                final boolean inNative = kind == EventKinds.NATIVE_METHOD_SAMPLE;
-                t.samples.add(new Sample(Events.startNanos(e), stack, idle.isIdle(stack), inNative));
-            }
             case EventKinds.JAVA_MONITOR_WAIT -> t.blocks.add(new Block(Events.interval(e), BlockKind.OBJECT_WAIT,
                     lockNames.on(lockName(e, Fields.MONITOR_CLASS)), Events.stack(e, interner),
                     Events.booleanOr(e, Fields.TIMED_OUT, false, interner)));
@@ -342,17 +361,24 @@ public final class StallCollector implements JfrReader.Sink {
                 && info.isEnabled(EventKinds.nameOf(EventKinds.THREAD_END));
         final ObjList<ThreadTimeline> timelines = new ObjList<>();
         final StallAnalysis.SamplerShares shares = new StallAnalysis.SamplerShares();
+        final Bystanders bystanders = new Bystanders(bystanderIdle, siteKey);
         for (int s = 0, n = threads.slots(); s < n; s++) {
             if (!threads.hasKeyAtSlot(s)) {
                 continue;
             }
             final ThreadEvents t = threads.valueAtSlot(s);
+            final ThreadRef thread = threads.keyAtSlot(s);
             shares.add(t.javaSamples, t.nativeSamples, lifetimes ? life(t, span) : span.duration());
-            if (!t.watched || (t.samples.isEmpty() && t.blocks.isEmpty())) {
+            if (!t.watched) {
+                bystanders.add(thread, t.otherSamples);
                 continue;
             }
-            final ThreadRef thread = threads.keyAtSlot(s);
+            if (t.samples.isEmpty() && t.blocks.isEmpty()) {
+                continue;
+            }
             t.samples.sort(BY_TIME);
+            final List<Sample> samples = t.samples.toList();
+            bystanders.add(thread, samples);
             final ObjList<Block> blocks = new ObjList<>(t.blocks.size());
             for (int i = 0, m = t.blocks.size(); i < m; i++) {
                 final Block block = t.blocks.getQuick(i);
@@ -365,9 +391,9 @@ public final class StallCollector implements JfrReader.Sink {
                 lifeStart = lifeStart(t, span);
                 lifeEnd = lifeEnd(t, span, lifeStart);
             }
-            timelines.add(new ThreadTimeline(thread, t.samples.toList(), blocks.toList(), lifeStart, lifeEnd));
+            timelines.add(new ThreadTimeline(thread, samples, blocks.toList(), lifeStart, lifeEnd));
         }
-        report = analysis.analyse(info, timelines.toList(), pauses(), parks, silentThreads(info), shares);
+        report = analysis.analyse(info, timelines.toList(), pauses(), parks, silentThreads(info), shares, bystanders);
     }
 
     /** A thread's life inside the window, from its start and end events where it has them. */
@@ -499,6 +525,8 @@ public final class StallCollector implements JfrReader.Sink {
         /** The filter's verdict for the thread's name, decided once. */
         final boolean watched;
         final ObjList<Sample> samples = new ObjList<>(16);
+        /** An unwatched thread's samples, flat, for the threads seen running during a stall. */
+        final Bystanders.Samples otherSamples = new Bystanders.Samples();
         final ObjList<Block> blocks = new ObjList<>(8);
         /** How often the sampler saw the thread in Java and in native code, watched or not. */
         int javaSamples;

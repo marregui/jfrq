@@ -28,6 +28,7 @@ import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.procs.ProcessReport;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Perch;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
@@ -169,6 +170,13 @@ public final class Html {
             final int row = n++;
             p.row(row, s.thread().name(), Durations.at(s.start(), report.info().startNanos()),
                     Durations.format(s.duration()), s.verdict(), s.detail(), s.evidence().name().toLowerCase(Locale.ROOT));
+            if (!s.meanwhile().isEmpty()) {
+                final StringBuilder seen = new StringBuilder(Meanwhile.LABEL).append(':');
+                for (final Meanwhile m : s.meanwhile()) {
+                    seen.append("\n  ").append(m.describe());
+                }
+                p.noteRow(7, seen.toString());
+            }
             if (s.stack().isEmpty()) {
                 continue;
             }

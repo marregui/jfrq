@@ -751,12 +751,12 @@ class StallAnalysisTest {
         final List<ThreadTimeline> watched = List.of(new ThreadTimeline(LOOP, List.of(), mine));
 
         final StallReport shared = new StallAnalysis(50 * MS).analyse(sampledInfo(), watched, List.of(), everyone, List.of(),
-                new StallAnalysis.SamplerShares());
+                new StallAnalysis.SamplerShares(), Bystanders.none());
         assertEquals(2, shared.stalls().size(), shared.stalls().toString());
         assertEquals(Verdict.PARKED, shared.stalls().getFirst().verdict());
 
         final StallReport own = new StallAnalysis(50 * MS).analyse(sampledInfo(), watched, List.of(), alone, List.of(),
-                new StallAnalysis.SamplerShares());
+                new StallAnalysis.SamplerShares(), Bystanders.none());
         assertTrue(own.stalls().isEmpty(), own.stalls().toString());
     }
 
@@ -1107,14 +1107,14 @@ class StallAnalysisTest {
     @Test
     void matchingThreadsWithNothingToJudgeAreNamed() {
         final StallReport r = new StallAnalysis(50 * MS).analyse(sampledInfo(), List.of(), List.of(), new ParkShapes(),
-                List.of("VM Thread"), new StallAnalysis.SamplerShares());
+                List.of("VM Thread"), new StallAnalysis.SamplerShares(), Bystanders.none());
         assertTrue(r.threads().isEmpty());
         assertEquals(1, r.warnings().size(), r.warnings().toString());
         assertTrue(r.warnings().getFirst().startsWith("1 matching thread has no samples and no blocking events, "
                 + "so nothing to judge by (VM Thread)"), r.warnings().getFirst());
         final List<String> many = List.of("a", "b", "c", "d", "e", "f", "g");
         final String w = new StallAnalysis(50 * MS).analyse(sampledInfo(), List.of(), List.of(), new ParkShapes(), many,
-                new StallAnalysis.SamplerShares())
+                new StallAnalysis.SamplerShares(), Bystanders.none())
                 .warnings().getFirst();
         assertTrue(w.startsWith("7 matching threads have no samples and no blocking events, so nothing to judge by "
                 + "(a, b, c, d, e and 2 more)"), w);

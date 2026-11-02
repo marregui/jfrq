@@ -32,13 +32,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.jfrq.core.jfr.JfrReader;
+import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.report.Html;
+import dev.jfrq.core.report.Json;
 import dev.jfrq.core.report.JsonParser;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Stall;
+import dev.jfrq.core.stalls.StallReport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -796,6 +801,47 @@ class MainTest {
         final Run defaults = run("stalls", recording.toString(), "--thread", "loop-cli");
         assertEquals(0, defaults.status());
         assertTrue(defaults.out().contains("Gap        50.0 ms"));
+    }
+
+    /// A stall on a lock nobody is recorded holding prints the threads seen meanwhile under its
+    /// row, labelled a correlation, in text, JSON and HTML alike.
+    @Test
+    void stallsNameWhoRanMeanwhileAsACorrelation() {
+        final RecordingInfo info = new RecordingInfo(Path.of("m.jfr"), new Interval(0, 10_000_000_000L), 1, Map.of(),
+                Map.of(), Set.of(), List.of());
+        final Meanwhile seen = new Meanwhile(new ThreadRef(2, "AppKit Thread"), 0, 7,
+                "sun.java2d.metal.MTLLayer.blitTexture", 7, null);
+        final Stall park = new Stall(new ThreadRef(1, "AWT-EventQueue-0"), new Interval(1_000_000_000L, 2_010_000_000L),
+                Stall.Verdict.PARKED, "parked on java.util.concurrent.locks.ReentrantLock$NonfairSync@1", Stack.EMPTY,
+                Stall.Evidence.EVENT, 0, List.of(seen));
+        final StallReport r = new StallReport(info, 50_000_000L, List.of(), List.of(park), List.of(), List.of());
+        final String line = "AppKit Thread: 7 native samples, all in sun.java2d.metal.MTLLayer.blitTexture";
+
+        final String text = Text.stalls(r, 10);
+        final String block = "ReentrantLock$NonfairSync@1\n        " + Meanwhile.LABEL + ":\n          " + line + "\n";
+        assertTrue(text.contains(block), text);
+
+        final Map<String, Object> json = JsonParser.object(Json.stalls(r, 10, "test"));
+        final Map<?, ?> stall = (Map<?, ?>) ((List<?>) json.get("stalls")).getFirst();
+        final Map<?, ?> meanwhile = (Map<?, ?>) ((List<?>) stall.get("meanwhile")).getFirst();
+        assertEquals("AppKit Thread", meanwhile.get("thread"));
+        assertEquals(0L, meanwhile.get("javaSamples"));
+        assertEquals(7L, meanwhile.get("nativeSamples"));
+        assertEquals("sun.java2d.metal.MTLLayer.blitTexture", meanwhile.get("frame"));
+        assertEquals(7L, meanwhile.get("frameSamples"));
+        assertTrue(meanwhile.containsKey("site") && meanwhile.get("site") == null, meanwhile.toString());
+
+        final String html = Html.stalls(r, 10);
+        assertTrue(html.contains(Meanwhile.LABEL + ":\n  " + line), html);
+
+        // A stall with nobody seen meanwhile has no line and an empty list.
+        final StallReport plain = new StallReport(info, 50_000_000L, List.of(),
+                List.of(park.withMeanwhile(List.of())), List.of(), List.of());
+        assertFalse(Text.stalls(plain, 10).contains(Meanwhile.LABEL));
+        assertFalse(Html.stalls(plain, 10).contains(Meanwhile.LABEL));
+        final Map<?, ?> none = (Map<?, ?>) ((List<?>) JsonParser.object(Json.stalls(plain, 10, "test")).get("stalls"))
+                .getFirst();
+        assertEquals(List.of(), none.get("meanwhile"));
     }
 
     /** A recording of three threads one spawner starts, with their starts and CPU readings. */

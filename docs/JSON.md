@@ -82,7 +82,8 @@ the text report.
 | `byVerdict[]` | `verdict`, `stalls`, `stalledNanos`, `worstNanos`, largest total first |
 | `threadsWithStalls`, `threadsWithoutStalls` | the counts behind `threads` |
 | `threads[]` | the threads that stalled, most stalled first: `thread`, `threadId`, `virtual`, `samples`, `javaCadenceNanos`, `nativeCadenceNanos`, `sight`, `unseenBelowNanos` (the shortest unexplained stall the samples can show; one longer than the recording means none, which the text prints as a dash), `stalls`, `stalledNanos`, `worstNanos` |
-| `stallsFound`, `stalls[]` | the explained stalls, longest first: `thread`, `start`, `offsetNanos`, `durationNanos`, `verdict`, `evidence`, `detail`, `samples`, `stack` |
+| `stallsFound`, `stalls[]` | the explained stalls, longest first: `thread`, `start`, `offsetNanos`, `durationNanos`, `verdict`, `evidence`, `detail`, `samples`, `stack`, `meanwhile` |
+| `stalls[].meanwhile[]` | for a park on a lock, or a monitor enter whose holder is unknown, up to three other threads the sampler saw running during it, a correlation and not a holder; empty otherwise: `thread`, `javaSamples`, `nativeSamples` (samples inside the stall that are not idle), `frame` (the innermost frame most of them had), `frameSamples` (how many had it), `site` (the site under `--app`, `null` without it) |
 | `unexplainedFound`, `unexplained[]` | the unexplained gaps, the same shape |
 | `pausesFound`, `pauses[]` | JVM-wide pauses at least the gap long: `start`, `offsetNanos`, `durationNanos`, `kind` (`GC`, `SAFEPOINT`), `detail` |
 

@@ -420,7 +420,16 @@ public final class StallAnalysis {
             }
             shares.add(tl.samples().size() - inNative, inNative, life(tl, info.span()));
         }
-        return analyse(info, timelines, pauses, parks, List.of(), shares);
+        return analyse(info, timelines, pauses, parks, List.of(), shares, bystanders(timelines));
+    }
+
+    /** The timelines' samples, for the threads seen running during a stall, judged idle as the collector would. */
+    private static Bystanders bystanders(final List<ThreadTimeline> timelines) {
+        final Bystanders bystanders = new Bystanders(IdleMatcher.forBystanders(IdleMatcher.defaults()), null);
+        for (int t = 0, n = timelines.size(); t < n; t++) {
+            bystanders.add(timelines.get(t).thread(), timelines.get(t).samples());
+        }
+        return bystanders;
     }
 
     /** The thread's life inside the window, or the window when the recording cannot say. */
@@ -476,9 +485,11 @@ public final class StallAnalysis {
     /**
      * @param parks  every thread's parks, watched or not, for {@link Perch}
      * @param silent threads the filter matched that have neither a sample nor a blocking event
+     * @param bystanders every thread's samples, watched or not, for {@link #withMeanwhile}
      */
     StallReport analyse(final RecordingInfo info, final List<ThreadTimeline> timelines, final List<Pause> pauses,
-                        final ParkShapes parks, final List<String> silent, final SamplerShares shares) {
+                        final ParkShapes parks, final List<String> silent, final SamplerShares shares,
+                        final Bystanders bystanders) {
         final List<String> warnings = new ArrayList<>();
         warnRecording(info, warnings);
         warnSilent(silent, warnings);
@@ -552,8 +563,36 @@ public final class StallAnalysis {
                     : clippedStalls + " stalls extend beyond the recording's span and are counted only for the "
                             + "part inside it");
         }
-        return new StallReport(info, gap, summaries.toList(), markSimultaneous(stalls.toList()), longPauses.toList(),
-                warnings);
+        return new StallReport(info, gap, summaries.toList(),
+                withMeanwhile(markSimultaneous(stalls.toList()), bystanders), longPauses.toList(), warnings);
+    }
+
+    /**
+     * Each stall on a lock whose holder the recording does not name, with the other threads the
+     * sampler saw running during it ({@link Bystanders#during}). A {@code jdk.ThreadPark} carries
+     * no owner, and a monitor's holder is unknown when JFR recorded none and no wait of another
+     * thread fills it in ({@link Holders}); the threads seen meanwhile are then the only trace of
+     * it, and they are a correlation. A stall whose holder is known keeps it alone, and a park on
+     * no object has nothing anyone holds.
+     */
+    static List<Stall> withMeanwhile(final List<Stall> stalls, final Bystanders bystanders) {
+        final ObjList<Stall> out = new ObjList<>(stalls.size());
+        for (int i = 0, n = stalls.size(); i < n; i++) {
+            final Stall s = stalls.get(i);
+            final List<Meanwhile> seen = hasNoRecordedHolder(s) ? bystanders.during(s.thread(), s.interval())
+                    : List.of();
+            out.add(seen.isEmpty() ? s : s.withMeanwhile(seen));
+        }
+        return out.toList();
+    }
+
+    /** A park on an object, or a monitor enter whose holder is unknown: a wait on a lock nobody is named for. */
+    static boolean hasNoRecordedHolder(final Stall s) {
+        return switch (s.verdict()) {
+            case PARKED -> !s.detail().contains(ParkShapes.NO_BLOCKER);
+            case BLOCKED_MONITOR -> s.detail().contains(HELD_BY_UNKNOWN);
+            default -> false;
+        };
     }
 
     /**
@@ -1757,7 +1796,7 @@ public final class StallAnalysis {
         if (b.kind() != BlockKind.MONITOR || owners.size() < 2) {
             return describe(b, detail, b.bytes());
         }
-        final StringBuilder sb = new StringBuilder(b.kind().label()).append(' ').append(detail).append(" held by ");
+        final StringBuilder sb = new StringBuilder(b.kind().label()).append(' ').append(detail).append(HELD_BY);
         for (int i = 0, n = Math.min(owners.size(), OWNERS_SHOWN); i < n; i++) {
             sb.append(i > 0 ? ", " : "").append(owners.get(i).name());
         }
@@ -1766,6 +1805,10 @@ public final class StallAnalysis {
         }
         return sb.toString();
     }
+
+    /** How a monitor stall's detail names its holder, and says the recording names none. */
+    private static final String HELD_BY = " held by ";
+    private static final String HELD_BY_UNKNOWN = HELD_BY + "unknown";
 
     /** Holders a grouped monitor wait names before it counts the rest. */
     private static final int OWNERS_SHOWN = 3;
@@ -1779,7 +1822,7 @@ public final class StallAnalysis {
             sb.append(" (").append(Bytes.format(bytes)).append(')');
         }
         if (b.kind() == BlockKind.MONITOR) {
-            sb.append(" held by ").append(b.owner() == null ? "unknown" : b.owner().name());
+            sb.append(b.owner() == null ? HELD_BY_UNKNOWN : HELD_BY + b.owner().name());
             Holders.appendVia(sb, b.via());
         }
         return sb.toString();

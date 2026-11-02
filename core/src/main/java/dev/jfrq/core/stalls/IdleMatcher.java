@@ -66,6 +66,20 @@ public final class IdleMatcher {
             "java\\.util\\.concurrent\\.locks\\.LockSupport\\.park\\w*",
             "java\\.lang\\.Object\\.wait\\w*");
 
+    /**
+     * Where a thread waits in native code for something outside the JVM and runs nothing: a
+     * sleep, an accept or a socket poll, a wait for a child process, a blocking read of a pipe,
+     * a file or a socket. They are not idle points for a watched thread, whose read is a stall
+     * with its own event; they are for a thread seen meanwhile ({@link #forBystanders}), which
+     * the sampler's one native slot otherwise reports as busy whenever its turn comes.
+     */
+    static final List<String> OFF_CPU_PATTERNS = List.of(
+            "java\\.lang\\.Thread\\.sleep\\w*",
+            "sun\\.nio\\.ch\\.Net\\.(accept|poll)",
+            "java\\.lang\\.ProcessHandleImpl\\.waitForProcessExit0",
+            "java\\.io\\.FileInputStream\\.readBytes",
+            "sun\\.nio\\.ch\\.SocketDispatcher\\.read0");
+
     /** The frames a thread blocks in, whatever it waits for: never an idle point of their own for an event. */
     private static final List<String> WAIT_PRIMITIVES = List.of(
             "jdk.internal.misc.Unsafe.park",
@@ -123,6 +137,28 @@ public final class IdleMatcher {
             }
         }
         return workWaits(spec.toString());
+    }
+
+    /**
+     * What an idle sample of a thread <em>other</em> than the stalled one looks like, for the
+     * threads seen running meanwhile: the default idle points, any the caller named with
+     * {@code --idle}, and {@link #OFF_CPU_PATTERNS}, the native waits that run nothing.
+     * {@link #none()} for a caller who asked for no idle classification at all.
+     */
+    public static IdleMatcher forBystanders(final IdleMatcher sampleIdle) {
+        if (sampleIdle.matchesNothing()) {
+            return none();
+        }
+        final StringBuilder spec = new StringBuilder(String.join(",", DEFAULT_PATTERNS));
+        for (final String p : OFF_CPU_PATTERNS) {
+            spec.append(',').append(p);
+        }
+        for (final Pattern p : sampleIdle.patterns) {
+            if (!DEFAULT_PATTERNS.contains(p.pattern())) {
+                spec.append(',').append(p.pattern());
+            }
+        }
+        return of(spec.toString());
     }
 
     private static boolean namesAWait(final Pattern p) {
