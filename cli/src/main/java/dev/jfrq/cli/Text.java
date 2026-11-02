@@ -20,6 +20,7 @@ import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.report.RecordingSummary;
 import dev.jfrq.core.report.ThreadCensus;
 import dev.jfrq.core.stalls.Perch;
@@ -30,6 +31,7 @@ import dev.jfrq.core.util.Bytes;
 import dev.jfrq.core.util.ClassNames;
 import dev.jfrq.core.util.Durations;
 import dev.jfrq.core.util.TextTable;
+import dev.jfrq.core.waits.WaitReport;
 
 /** Terminal rendering of every report. Plain text, paste-able into a ticket. */
 final class Text {
@@ -659,7 +661,8 @@ final class Text {
         return sb.toString();
     }
 
-    static String hot(final HotReport r, final int top) {
+    /** {@code sites}: the sites listed per family, {@code --sites}. */
+    static String hot(final HotReport r, final int top, final int sites) {
         final StringBuilder sb = new StringBuilder(header(r.info()));
         sb.append(settingsLine(r.info(), "Sampling", "jdk.ExecutionSample"));
         if (r.samples() == 0) {
@@ -677,11 +680,11 @@ final class Text {
             sb.append(String.format(Locale.ROOT, "%8d %6s  %s%s\n", g.samples(), pct(r.share(g.samples())), g.name(),
                     g.threads() == 1 ? "" : " (" + g.threads() + " threads)"));
             long rest = g.samples();
-            for (final HotReport.Site site : shown(g.sites(), HotReport.SITES_SHOWN)) {
+            for (final HotReport.Site site : shown(g.sites(), sites)) {
                 sb.append(String.format(Locale.ROOT, "%17d  %s\n", site.samples(), site.frame()));
                 rest -= site.samples();
                 long under = site.samples();
-                if (site.next().size() == 1 && site.next().getFirst().frame().equals(HotReport.AT_SITE)) {
+                if (site.next().size() == 1 && site.next().getFirst().frame().equals(SiteKey.AT_SITE)) {
                     continue;
                 }
                 for (final HotReport.Count c : shown(site.next(), HotReport.NEXT_SHOWN)) {
@@ -694,8 +697,8 @@ final class Text {
                 }
             }
             if (rest > 0) {
-                sb.append(String.format(Locale.ROOT, "%17d  (%d more sites)\n", rest,
-                        g.sites().size() - HotReport.SITES_SHOWN));
+                sb.append(String.format(Locale.ROOT, "%17d  (%d more sites, --sites to list them)\n", rest,
+                        g.sites().size() - sites));
             }
         }
         if (r.groups().size() > top) {
@@ -730,6 +733,113 @@ final class Text {
             timeline.row(cells.toArray());
         }
         sb.append(timeline.render("  "));
+        return sb.toString();
+    }
+
+    /** Example command lines are cut to this many characters; JSON has them whole. */
+    private static final int EXAMPLE_CHARS = 100;
+
+    static String procs(final ProcessReport r, final int top) {
+        final StringBuilder sb = new StringBuilder(header(r.info()));
+        if (r.starts() == 0) {
+            sb.append("\nNo process starts. jdk.ProcessStart is on in the 'default' and 'profile' settings; a "
+                    + "recording made with either started no process in its span.\n");
+            return sb.toString();
+        }
+        sb.append(String.format(Locale.ROOT, "%-10s %d started, %.1f per minute, %d command%s\n", "Processes",
+                r.starts(), r.perMinute(r.starts()), r.commands().size(), r.commands().size() == 1 ? "" : "s"));
+        sb.append(wrap("a command is the basename of the command line's first word; a site is " + r.siteKey(),
+                String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
+
+        sb.append("\nBY COMMAND\n");
+        for (final ProcessReport.Command c : shown(r.commands(), top)) {
+            sb.append(String.format(Locale.ROOT, "%8d %8.1f/min  %s\n", c.starts(), r.perMinute(c.starts()),
+                    c.command()));
+            sb.append("                    threads  ").append(ProcessReport.listed(c.threads())).append('\n');
+            sb.append("                    sites    ").append(ProcessReport.listed(c.sites())).append('\n');
+            final String example = c.example().length() > EXAMPLE_CHARS
+                    ? c.example().substring(0, EXAMPLE_CHARS - 1) + "…" : c.example();
+            sb.append("                    e.g.     ").append(example).append('\n');
+        }
+        if (r.commands().size() > top) {
+            sb.append(String.format(Locale.ROOT, "  %d more commands, --top to list them\n",
+                    r.commands().size() - top));
+        }
+
+        sb.append("\nBY THREAD FAMILY\n");
+        final TextTable families = new TextTable("Starts", "Per min", "Family", "Threads", "Commands")
+                .numeric(0, 1, 3);
+        for (final ProcessReport.Family f : shown(r.families(), top)) {
+            families.row(f.starts(), String.format(Locale.ROOT, "%.1f", r.perMinute(f.starts())), f.name(),
+                    f.threads(), ProcessReport.listed(f.commands()));
+        }
+        sb.append(families.render("  "));
+        if (r.families().size() > top) {
+            sb.append(String.format(Locale.ROOT, "  %d more families, --top to list them\n",
+                    r.families().size() - top));
+        }
+        return sb.toString();
+    }
+
+    static String waits(final WaitReport r, final int top) {
+        final StringBuilder sb = new StringBuilder(header(r.info()));
+        sb.append(settingsLine(r.info(), "Thresholds", "jdk.JavaMonitorWait", "jdk.ThreadPark"));
+        if (r.waits() == 0) {
+            sb.append("\nNo waits match. jdk.JavaMonitorWait and jdk.ThreadPark are on in the 'default' and "
+                    + "'profile' settings, for waits above the thresholds; check --thread and --monitor against "
+                    + "'jfrq info'.\n");
+            return sb.toString();
+        }
+        sb.append(String.format(Locale.ROOT, "%-10s %s across %d wait%s on %d class%s\n", "Waited",
+                Durations.format(r.totalNanos()), r.waits(), r.waits() == 1 ? "" : "s", r.classes().size(),
+                r.classes().size() == 1 ? "" : "es"));
+        if (r.clipped() > 0) {
+            sb.append(String.format(Locale.ROOT, "%-10s %d wait%s began before the recording or outlived it; "
+                    + "only the part inside it is counted\n", "Note", r.clipped(), r.clipped() == 1 ? "" : "s"));
+        }
+        sb.append(wrap("a site is " + r.siteKey() + "; under it, the outermost frame outside the JDK below the "
+                + "site, else the frame the site called", String.format(Locale.ROOT, "%-10s ", "Sites"),
+                " ".repeat(11)));
+
+        sb.append("\nBY CLASS WAITED ON (wait: Object.wait on the monitor's class; park: LockSupport.park on the "
+                + "blocker's)\n");
+        int n = 1;
+        for (final WaitReport.Monitor m : shown(r.classes(), top)) {
+            sb.append(String.format(Locale.ROOT, "  %2d  %-4s  %s  %s across %d wait%s, longest %s\n", n++,
+                    m.kind().label(), ClassNames.pretty(m.className()), Durations.format(m.totalNanos()), m.waits(),
+                    m.waits() == 1 ? "" : "s", Durations.format(m.maxNanos())));
+            long rest = m.totalNanos();
+            long restWaits = m.waits();
+            for (final WaitReport.Site site : shown(m.sites(), top)) {
+                sb.append(String.format(Locale.ROOT, "%18s %7d  %s\n", Durations.format(site.totalNanos()),
+                        site.waits(), site.frame()));
+                rest -= site.totalNanos();
+                restWaits -= site.waits();
+                if (site.below().size() == 1 && site.below().getFirst().frame().equals(SiteKey.AT_SITE)) {
+                    continue;
+                }
+                long under = site.totalNanos();
+                long underWaits = site.waits();
+                for (final WaitReport.Below b : shown(site.below(), WaitReport.BELOW_SHOWN)) {
+                    sb.append(String.format(Locale.ROOT, "%26s %7d    %s\n", Durations.format(b.totalNanos()),
+                            b.waits(), b.frame()));
+                    under -= b.totalNanos();
+                    underWaits -= b.waits();
+                }
+                if (underWaits > 0) {
+                    sb.append(String.format(Locale.ROOT, "%26s %7d    (%d more below)\n", Durations.format(under),
+                            underWaits, site.below().size() - WaitReport.BELOW_SHOWN));
+                }
+            }
+            if (restWaits > 0) {
+                sb.append(String.format(Locale.ROOT, "%18s %7d  (%d more sites, --top to list them)\n",
+                        Durations.format(rest), restWaits, m.sites().size() - top));
+            }
+        }
+        if (r.classes().size() > top) {
+            sb.append(String.format(Locale.ROOT, "  %d more classes, --top to list them\n",
+                    r.classes().size() - top));
+        }
         return sb.toString();
     }
 

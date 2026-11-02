@@ -40,6 +40,8 @@ JDK Mission Control shows the data; `jfr view` prints aggregate tables. Neither 
 | Why did the event loop stop at 14:03:07: a lock, a blocking socket or file call, a sleep, a GC pause, or CPU-bound code? | `jfrq stalls` |
 | Which locks did threads wait for, who held them, and which holders were themselves blocked (convoys)? | `jfrq locks` |
 | Where did the CPU go: which thread families, which of my methods, what below them, and when? | `jfrq hot` |
+| Which processes did the JVM start, how many a minute, from which threads and which of my methods? | `jfrq procs` |
+| What did a thread wait on in `Object.wait` or `park`, for how long, and from which code? | `jfrq waits` |
 | Which threads, classes and sites allocate, in bytes per second, and what changed since the recording before the fix? | `jfrq alloc` |
 | What did the JVM report about itself that points at trouble: failed evacuations, full GCs, heap floors that climb, throwables by site? | `jfrq health` |
 | What is in the file: span, threads and their CPU, event counts, and the thresholds that limit what it can show? | `jfrq info` |

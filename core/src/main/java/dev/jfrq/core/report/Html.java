@@ -27,6 +27,7 @@ import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.stalls.Perch;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
@@ -34,6 +35,7 @@ import dev.jfrq.core.stalls.Timeline.Pause;
 import dev.jfrq.core.util.Bytes;
 import dev.jfrq.core.util.ClassNames;
 import dev.jfrq.core.util.Durations;
+import dev.jfrq.core.waits.WaitReport;
 
 /**
  * Self-contained HTML reports: one file, no scripts, no external resources, so they can
@@ -375,8 +377,8 @@ public final class Html {
         return timeline(span, labels, rows) + legend;
     }
 
-    /** {@code jfrq hot}: the same tables as the text, cut to the same limits. */
-    public static String hot(final HotReport r, final int top) {
+    /** {@code jfrq hot}: the same tables as the text, cut to the same limits; {@code sites} per family. */
+    public static String hot(final HotReport r, final int top, final int sites) {
         final Page p = new Page("jfrq hot", r.info());
         p.kv("Sampling", RecordingSummary.settings(r.info(), "jdk.ExecutionSample"));
         if (r.samples() == 0) {
@@ -393,7 +395,7 @@ public final class Html {
         for (final HotReport.Group g : Json.top(r.groups(), top)) {
             boolean first = true;
             long rest = g.samples();
-            for (final HotReport.Site site : Json.top(g.sites(), HotReport.SITES_SHOWN)) {
+            for (final HotReport.Site site : Json.top(g.sites(), sites)) {
                 final StringBuilder below = new StringBuilder();
                 long under = site.samples();
                 for (final HotReport.Count c : Json.top(site.next(), HotReport.NEXT_SHOWN)) {
@@ -412,7 +414,8 @@ public final class Html {
                 rest -= site.samples();
             }
             if (rest > 0) {
-                p.row("", "", "", "", "(" + (g.sites().size() - HotReport.SITES_SHOWN) + " more sites)", rest, "");
+                p.row("", "", "", "", "(" + (g.sites().size() - sites) + " more sites, --sites to list them)", rest,
+                        "");
             }
         }
         if (r.groups().size() > top) {
@@ -440,6 +443,89 @@ public final class Html {
                 cells.add(g.timeline().get(b));
             }
             p.row(cells.toArray());
+        }
+        p.tableEnd();
+        return p.finish();
+    }
+
+    public static String procs(final ProcessReport r, final int top) {
+        final Page p = new Page("jfrq procs", r.info());
+        if (r.starts() == 0) {
+            p.para("No process starts. jdk.ProcessStart is on in the 'default' and 'profile' settings; a recording "
+                    + "made with either started no process in its span.");
+            return p.finish();
+        }
+        p.kv("Processes", r.starts() + " started, " + String.format(Locale.ROOT, "%.1f", r.perMinute(r.starts()))
+                + " per minute, " + r.commands().size() + (r.commands().size() == 1 ? " command" : " commands"));
+        p.kv("Sites", "a command is the basename of the command line's first word; a site is " + r.siteKey());
+        p.h2("By command");
+        p.tableStart("Starts", "Per min", "Command", "Threads", "Sites", "Example");
+        for (final ProcessReport.Command c : Json.top(r.commands(), top)) {
+            p.row(c.starts(), String.format(Locale.ROOT, "%.1f", r.perMinute(c.starts())), c.command(),
+                    ProcessReport.listed(c.threads()), ProcessReport.listed(c.sites()), c.example());
+        }
+        if (r.commands().size() > top) {
+            p.row("", "", "(" + (r.commands().size() - top) + " more commands, --top to list them)", "", "", "");
+        }
+        p.tableEnd();
+        p.h2("By thread family");
+        p.tableStart("Starts", "Per min", "Family", "Threads", "Commands");
+        for (final ProcessReport.Family f : Json.top(r.families(), top)) {
+            p.row(f.starts(), String.format(Locale.ROOT, "%.1f", r.perMinute(f.starts())), f.name(), f.threads(),
+                    ProcessReport.listed(f.commands()));
+        }
+        if (r.families().size() > top) {
+            p.row("", "", "(" + (r.families().size() - top) + " more families, --top to list them)", "", "");
+        }
+        p.tableEnd();
+        return p.finish();
+    }
+
+    public static String waits(final WaitReport r, final int top) {
+        final Page p = new Page("jfrq waits", r.info());
+        settingsKv(p, r.info(), "Thresholds", "jdk.JavaMonitorWait", "jdk.ThreadPark");
+        if (r.waits() == 0) {
+            p.para("No waits match. jdk.JavaMonitorWait and jdk.ThreadPark are on in the 'default' and 'profile' "
+                    + "settings, for waits above the thresholds; check --thread and --monitor against 'jfrq info'.");
+            return p.finish();
+        }
+        p.kv("Waited", Durations.format(r.totalNanos()) + " across " + r.waits() + (r.waits() == 1 ? " wait" : " waits")
+                + (r.clipped() > 0 ? "; " + r.clipped() + " began before the recording or outlived it, and count "
+                + "only the part inside it" : ""));
+        p.kv("Sites", "a site is " + r.siteKey() + "; below it, the outermost frame outside the JDK under the site, "
+                + "else the frame the site called");
+        p.h2("By class waited on");
+        p.tableStart("Event", "Class", "Total", "Waits", "Max", "Site", "Site total", "Site waits", "Below");
+        for (final WaitReport.Monitor m : Json.top(r.classes(), top)) {
+            boolean first = true;
+            for (final WaitReport.Site site : Json.top(m.sites(), top)) {
+                final StringBuilder below = new StringBuilder();
+                long underWaits = site.waits();
+                for (final WaitReport.Below b : Json.top(site.below(), WaitReport.BELOW_SHOWN)) {
+                    if (!below.isEmpty()) {
+                        below.append(", ");
+                    }
+                    below.append(b.frame()).append(' ').append(Durations.format(b.totalNanos())).append(" / ")
+                            .append(b.waits());
+                    underWaits -= b.waits();
+                }
+                if (underWaits > 0) {
+                    below.append(", ").append(site.below().size() - WaitReport.BELOW_SHOWN).append(" more");
+                }
+                p.row(first ? m.kind().label() : "", first ? ClassNames.pretty(m.className()) : "",
+                        first ? Durations.format(m.totalNanos()) : "", first ? m.waits() : "",
+                        first ? Durations.format(m.maxNanos()) : "", site.frame(), Durations.format(site.totalNanos()),
+                        site.waits(), below);
+                first = false;
+            }
+            if (m.sites().size() > top) {
+                p.row("", "", "", "", "", "(" + (m.sites().size() - top) + " more sites, --top to list them)", "", "",
+                        "");
+            }
+        }
+        if (r.classes().size() > top) {
+            p.row("(" + (r.classes().size() - top) + " more classes, --top to list them)", "", "", "", "", "", "", "",
+                    "");
         }
         p.tableEnd();
         return p.finish();

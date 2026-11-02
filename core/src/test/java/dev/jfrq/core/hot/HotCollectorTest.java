@@ -84,7 +84,7 @@ class HotCollectorTest {
 
         final HotReport.Group pool = r.groups().get(1);
         assertEquals(2, pool.threads());
-        assertEquals(List.of(new HotReport.Count(HotReport.AT_SITE, 2)), pool.sites().getFirst().next());
+        assertEquals(List.of(new HotReport.Count(SiteKey.AT_SITE, 2)), pool.sites().getFirst().next());
 
         assertEquals(new HotReport.Count("sun.java2d.Renderer.end", 4), r.leaves().getFirst());
         assertEquals(new HotReport.Count("com.app.Worker.run", 2), r.leaves().get(1));

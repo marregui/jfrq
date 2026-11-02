@@ -41,6 +41,8 @@ import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionCollector;
+import dev.jfrq.core.procs.ProcessCollector;
+import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.report.Html;
 import dev.jfrq.core.report.Json;
 import dev.jfrq.core.report.RecordingSummary;
@@ -49,13 +51,17 @@ import dev.jfrq.core.stalls.IdleMatcher;
 import dev.jfrq.core.stalls.StallCollector;
 import dev.jfrq.core.util.Durations;
 import dev.jfrq.core.util.Glob;
+import dev.jfrq.core.waits.WaitCollector;
+import dev.jfrq.core.waits.WaitReport;
 
 /**
  * {@code jfrq}: ask a JFR recording one question and get the answer.
  *
  * <pre>
  *   jfrq info   recording.jfr [--thread GLOB [--top N]] [--html out.html] [--json]
- *   jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--top N] [--html out.html] [--json]
+ *   jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--sites N] [--top N] [--html out.html] [--json]
+ *   jfrq procs  recording.jfr [--app PREFIX] [--top N] [--html out.html] [--json]
+ *   jfrq waits  recording.jfr [--thread GLOB] [--monitor GLOB] [--app PREFIX] [--top N] [--html out.html] [--json]
  *   jfrq alloc  recording.jfr [--baseline before.jfr] [--top N] [--sites] [--app PREFIX] [--html out.html] [--json]
  *   jfrq locks  recording.jfr [--min 10ms] [--thread GLOB] [--lock GLOB] [--idle REGEX,...] [--by-site] [--top N] [--html out.html] [--json]
  *   jfrq stalls recording.jfr --thread GLOB [--gap 50ms] [--idle REGEX,...] [--app PREFIX] [--top N] [--html out.html] [--json]
@@ -76,6 +82,9 @@ public final class Main {
                       code attached), event counts, active thresholds
               hot     where the CPU went: Java samples by thread family, site and the code below
                       it, leaf methods, and a timeline
+              procs   which processes the JVM started: by command, thread family and site, per minute
+              waits   what threads waited on in Object.wait and LockSupport.park: by class waited
+                      on, site and the code below it, from the waiting thread's side
               alloc   allocation pressure by thread, class and site; --baseline diffs two recordings
               locks   lock contention: which locks, who waited, who held them, convoys
               stalls  when a thread did not return to its idle point, and why
@@ -101,6 +110,22 @@ public final class Main {
                              innermost frame outside the JDK; under each site, the outermost
                              frame outside the JDK below it says what a container dispatched to
               --bucket D     the timeline's resolution (default 5m)
+              --sites N      sites listed per family (default 4); the rest are summed on one
+                             line. --json lists --top of them
+
+            procs:
+              --app PREFIX   name each command's sites by the innermost frame under one of
+                             these comma-separated prefixes, as alloc's --app does
+
+            waits:
+              --thread GLOB  only waits by threads matching GLOB (e.g. 'AWT-EventQueue-*')
+              --monitor GLOB only waits on these classes: the monitor's class for a wait, the
+                             blocker's for a park (e.g. '*QueueFlusher,*ReentrantLock*');
+                             a park with no blocker is '(no blocker)'
+              --app PREFIX   name each class's sites by the innermost frame under one of these
+                             comma-separated prefixes, as hot's --app does; under each site,
+                             the code below it as hot splits it. A wait that crosses an end of
+                             the recording counts only the part inside it
 
             alloc:
               --baseline F   compare against recording F (rates, so lengths may differ)
@@ -159,7 +184,9 @@ public final class Main {
         final Set<String> flags = new HashSet<>(COMMON_FLAGS);
         switch (command) {
             case "info" -> valued.add("thread");
-            case "hot" -> valued.addAll(Set.of("app", "bucket"));
+            case "hot" -> valued.addAll(Set.of("app", "bucket", "sites"));
+            case "procs" -> valued.add("app");
+            case "waits" -> valued.addAll(Set.of("thread", "monitor", "app"));
             case "alloc" -> {
                 valued.addAll(Set.of("baseline", "app"));
                 flags.add("sites");
@@ -342,6 +369,8 @@ public final class Main {
             return switch (question) {
                 case final Info q -> info(q);
                 case final Hot q -> hot(q);
+                case final Procs q -> procs(q);
+                case final Waits q -> waits(q);
                 case final Alloc q -> alloc(q);
                 case final Locks q -> locks(q);
                 case final Stalls q -> stalls(q);
@@ -366,7 +395,7 @@ public final class Main {
     }
 
     /** A question with every option resolved into a final value, before any file is read. */
-    private sealed interface Question permits Info, Hot, Alloc, Locks, Stalls, Health {
+    private sealed interface Question permits Info, Hot, Procs, Waits, Alloc, Locks, Stalls, Health {
         Path recording();
     }
 
@@ -374,7 +403,14 @@ public final class Main {
     private record Info(Path recording, int top, Glob threads, Path html) implements Question {
     }
 
-    private record Hot(Path recording, int top, SiteKey key, long bucket, Path html) implements Question {
+    private record Hot(Path recording, int top, int sites, SiteKey key, long bucket, Path html) implements Question {
+    }
+
+    private record Procs(Path recording, int top, SiteKey key, Path html) implements Question {
+    }
+
+    private record Waits(Path recording, int top, Glob threads, Glob monitors, SiteKey key, Path html)
+            implements Question {
     }
 
     private record Alloc(Path recording, Path baseline, int top, boolean sites, SiteKey key, Path html)
@@ -397,6 +433,8 @@ public final class Main {
         return switch (command) {
             case "info" -> info(args, recording);
             case "hot" -> hot(args, recording);
+            case "procs" -> procs(args, recording);
+            case "waits" -> waits(args, recording);
             case "alloc" -> alloc(args, recording);
             case "locks" -> locks(args, recording);
             case "stalls" -> stalls(args, recording);
@@ -410,7 +448,41 @@ public final class Main {
         if (bucket == Durations.INFINITE) {
             throw new Args.UsageException("--bucket must be finite");
         }
-        return new Hot(recording, args.top(), siteKey(args), bucket, htmlTarget(args, recording, null));
+        return new Hot(recording, args.top(), sitesShown(args), siteKey(args), bucket,
+                htmlTarget(args, recording, null));
+    }
+
+    /** {@code hot --sites N}: a positive count, {@link HotReport#SITES_SHOWN} without it. */
+    private static int sitesShown(final Args args) {
+        final Optional<String> v = args.option("sites");
+        if (v.isEmpty()) {
+            return HotReport.SITES_SHOWN;
+        }
+        try {
+            final int n = Integer.parseInt(v.orElseThrow());
+            if (n <= 0) {
+                throw new Args.UsageException("--sites must be positive");
+            }
+            return n;
+        } catch (final NumberFormatException e) {
+            throw new Args.UsageException("--sites is not a number: " + v.orElseThrow());
+        }
+    }
+
+    private static Procs procs(final Args args, final Path recording) {
+        return new Procs(recording, args.top(), siteKey(args), htmlTarget(args, recording, null));
+    }
+
+    private static Waits waits(final Args args, final Path recording) {
+        final Glob threads = args.option("thread").map(Glob::of).orElse(Glob.any());
+        if (threads.isEmpty()) {
+            throw new Args.UsageException("--thread must name at least one pattern");
+        }
+        final Glob monitors = args.option("monitor").map(Glob::of).orElse(Glob.any());
+        if (monitors.isEmpty()) {
+            throw new Args.UsageException("--monitor must name at least one pattern");
+        }
+        return new Waits(recording, args.top(), threads, monitors, siteKey(args), htmlTarget(args, recording, null));
     }
 
     private static Alloc alloc(final Args args, final Path recording) throws IOException {
@@ -514,8 +586,30 @@ public final class Main {
         JfrReader.read(q.recording(), collector);
         phase("read");
         final HotReport report = collector.report();
-        out.print(json ? Json.hot(report, q.top(), VERSION) : Text.hot(report, q.top()));
-        html(q.html(), () -> Html.hot(report, q.top()));
+        out.print(json ? Json.hot(report, q.top(), VERSION) : Text.hot(report, q.top(), q.sites()));
+        html(q.html(), () -> Html.hot(report, q.top(), q.sites()));
+        phase("render");
+        return 0;
+    }
+
+    private int procs(final Procs q) throws IOException {
+        final ProcessCollector collector = new ProcessCollector(q.key());
+        JfrReader.read(q.recording(), collector);
+        phase("read");
+        final ProcessReport report = collector.report();
+        out.print(json ? Json.procs(report, q.top(), VERSION) : Text.procs(report, q.top()));
+        html(q.html(), () -> Html.procs(report, q.top()));
+        phase("render");
+        return 0;
+    }
+
+    private int waits(final Waits q) throws IOException {
+        final WaitCollector collector = new WaitCollector(q.threads(), q.monitors(), q.key());
+        JfrReader.read(q.recording(), collector);
+        phase("read");
+        final WaitReport report = collector.report();
+        out.print(json ? Json.waits(report, q.top(), VERSION) : Text.waits(report, q.top()));
+        html(q.html(), () -> Html.waits(report, q.top()));
         phase("render");
         return 0;
     }

@@ -17,6 +17,8 @@
 | [design/stalls.md](design/stalls.md) | `stalls`: idle detection, evidence, sampling cadence, pauses, merging |
 | [design/locks.md](design/locks.md) | `locks`: waiting for work, holder resolution, convoys, moved locks |
 | [design/hot.md](design/hot.md) | `hot`: execution samples by family, site and the frame below it, the timeline |
+| [design/procs.md](design/procs.md) | `procs`: process starts by command, thread family and site, rates |
+| [design/waits.md](design/waits.md) | `waits`: monitor waits and parks by class, site and the frame below it, thresholds, clipping |
 | [design/alloc.md](design/alloc.md) | `alloc`: the weighted estimate, first samples, counters, sites, `--baseline` |
 | [design/health.md](design/health.md) | `health`: findings, trends, throwables, thread CPU, native memory |
 | [design/info.md](design/info.md) | `info`: settings, thread families and census, attached threads, starts |

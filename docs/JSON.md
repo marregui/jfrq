@@ -133,6 +133,31 @@ per recording in the order given, each a `recording` object followed by every fi
 `below[]` names the outermost frame outside the JDK under the site, else the frame the site called, else
 `(the site itself)`. Every list is cut to `--top`.
 
+## `procs`
+
+| Field | |
+|---|---|
+| `processStarts`, `perMinute` | every `jdk.ProcessStart` read, and that count per minute of the recording's span |
+| `siteKey` | how a site is chosen, in words |
+| `commandsFound`, `familiesFound` | how many rows each list had before `--top` |
+| `commands[]` | `command` (the basename of the command line's first word, `(empty)` when it has none), `starts`, `perMinute`, `example` (the earliest command line under that name, whole), `familiesFound`, `families[]` (`family`, `starts`), `sitesFound`, `sites[]` (`frame`, `starts`) |
+| `families[]` | `family`, `threads` (how many of its threads started a process), `starts`, `perMinute`, `commandsFound`, `commands[]` (`command`, `starts`) |
+
+Every list is cut to `--top`.
+
+## `waits`
+
+| Field | |
+|---|---|
+| `thresholdNanos` | `jdk.JavaMonitorWait` and `jdk.ThreadPark`: waits shorter than these are not in the file; `null` when the recording has no settings for one |
+| `siteKey` | how a site is chosen, in words |
+| `totalNanos`, `waits` | the time and count of every wait reported, each counted for the part inside the recording |
+| `clippedWaits` | how many of them began before the recording or outlived it |
+| `classesFound` | how many classes there were before `--top` |
+| `classes[]` | `event` (`jdk.JavaMonitorWait` or `jdk.ThreadPark`), `class` (the monitor's or the blocker's JVM class name, `(no blocker)` for a park without one), `totalNanos`, `waits`, `maxNanos`, `sitesFound`, `sites[]` (`frame`, `totalNanos`, `waits`, `maxNanos`, `belowFound`, `below[]` (`frame`, `totalNanos`, `waits`)) |
+
+`below[]` is chosen as in `hot`. Every list is cut to `--top`.
+
 ## `alloc`
 
 | Field | |

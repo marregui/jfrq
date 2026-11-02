@@ -23,9 +23,11 @@ import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
+import dev.jfrq.core.waits.WaitReport;
 
 /**
  * The reports as JSON, for a program rather than a person: {@code --json}. Built from the same
@@ -598,6 +600,112 @@ public final class Json {
             w.name("samples").value(c.samples());
             w.end();
         }
+    }
+
+    /**
+     * {@code jfrq procs}: the process starts by command, each with its thread families and sites,
+     * and by thread family, every list cut to {@code top}; rates are per minute of the span.
+     */
+    public static String procs(final ProcessReport r, final int top, final String version) {
+        final Writer w = envelope("procs", version, r.info());
+        w.name("processStarts").value(r.starts());
+        w.name("perMinute").value(r.perMinute(r.starts()));
+        w.name("siteKey").value(r.siteKey());
+        w.name("commandsFound").value(r.commands().size());
+        w.name("commands").array();
+        for (final ProcessReport.Command c : top(r.commands(), top)) {
+            w.object();
+            w.name("command").value(c.command());
+            w.name("starts").value(c.starts());
+            w.name("perMinute").value(r.perMinute(c.starts()));
+            w.name("example").value(c.example());
+            w.name("familiesFound").value(c.threads().size());
+            w.name("families").array();
+            starts(w, top(c.threads(), top), "family");
+            w.end();
+            w.name("sitesFound").value(c.sites().size());
+            w.name("sites").array();
+            starts(w, top(c.sites(), top), "frame");
+            w.end();
+            w.end();
+        }
+        w.end();
+        w.name("familiesFound").value(r.families().size());
+        w.name("families").array();
+        for (final ProcessReport.Family f : top(r.families(), top)) {
+            w.object();
+            w.name("family").value(f.name());
+            w.name("threads").value(f.threads());
+            w.name("starts").value(f.starts());
+            w.name("perMinute").value(r.perMinute(f.starts()));
+            w.name("commandsFound").value(f.commands().size());
+            w.name("commands").array();
+            starts(w, top(f.commands(), top), "command");
+            w.end();
+            w.end();
+        }
+        w.end();
+        return w.finish();
+    }
+
+    private static void starts(final Writer w, final List<ProcessReport.Count> counts, final String field) {
+        for (final ProcessReport.Count c : counts) {
+            w.object();
+            w.name(field).value(c.name());
+            w.name("starts").value(c.starts());
+            w.end();
+        }
+    }
+
+    /**
+     * {@code jfrq waits}: the waits by event type and class waited on, each split by site and by the
+     * frame below the site, every list cut to {@code top}.
+     */
+    public static String waits(final WaitReport r, final int top, final String version) {
+        final Writer w = envelope("waits", version, r.info());
+        final RecordingInfo info = r.info();
+        w.name("thresholdNanos").object();
+        w.name("jdk.JavaMonitorWait").value(info.thresholdNanos("jdk.JavaMonitorWait"));
+        w.name("jdk.ThreadPark").value(info.thresholdNanos("jdk.ThreadPark"));
+        w.end();
+        w.name("siteKey").value(r.siteKey());
+        w.name("totalNanos").value(r.totalNanos());
+        w.name("waits").value(r.waits());
+        w.name("clippedWaits").value(r.clipped());
+        w.name("classesFound").value(r.classes().size());
+        w.name("classes").array();
+        for (final WaitReport.Monitor m : top(r.classes(), top)) {
+            w.object();
+            w.name("event").value(m.kind().eventType());
+            w.name("class").value(m.className());
+            w.name("totalNanos").value(m.totalNanos());
+            w.name("waits").value(m.waits());
+            w.name("maxNanos").value(m.maxNanos());
+            w.name("sitesFound").value(m.sites().size());
+            w.name("sites").array();
+            for (final WaitReport.Site site : top(m.sites(), top)) {
+                w.object();
+                w.name("frame").value(site.frame());
+                w.name("totalNanos").value(site.totalNanos());
+                w.name("waits").value(site.waits());
+                w.name("maxNanos").value(site.maxNanos());
+                w.name("belowFound").value(site.below().size());
+                w.name("below").array();
+                for (final WaitReport.Below b : top(site.below(), top)) {
+                    w.object();
+                    w.name("frame").value(b.frame());
+                    w.name("totalNanos").value(b.totalNanos());
+                    w.name("waits").value(b.waits());
+                    w.end();
+                }
+                w.end();
+                w.end();
+            }
+            w.end();
+            w.end();
+        }
+        w.end();
+        return w.finish();
     }
 
     public static String alloc(final AllocationReport r, final int top, final boolean sites, final SiteKey key,
