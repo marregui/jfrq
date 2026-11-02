@@ -15,6 +15,7 @@ import dev.jfrq.core.alloc.AllocationReport;
 import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
+import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
@@ -658,6 +659,80 @@ final class Text {
         return sb.toString();
     }
 
+    static String hot(final HotReport r, final int top) {
+        final StringBuilder sb = new StringBuilder(header(r.info()));
+        sb.append(settingsLine(r.info(), "Sampling", "jdk.ExecutionSample"));
+        if (r.samples() == 0) {
+            sb.append("\nNo execution samples. Record with the 'profile' or 'default' settings, or enable "
+                    + "jdk.ExecutionSample.\n");
+            return sb.toString();
+        }
+        sb.append(String.format(Locale.ROOT, "%-10s %d of threads running Java code, in %d %s\n", "Samples",
+                r.samples(), r.groups().size(), r.groups().size() == 1 ? "family" : "families"));
+        sb.append(wrap("a site is " + r.siteKey() + "; under it, the outermost frame outside the JDK below the "
+                + "site, else the frame the site called", String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
+
+        sb.append("\nBY THREAD FAMILY\n");
+        for (final HotReport.Group g : shown(r.groups(), top)) {
+            sb.append(String.format(Locale.ROOT, "%8d %6s  %s%s\n", g.samples(), pct(r.share(g.samples())), g.name(),
+                    g.threads() == 1 ? "" : " (" + g.threads() + " threads)"));
+            long rest = g.samples();
+            for (final HotReport.Site site : shown(g.sites(), HotReport.SITES_SHOWN)) {
+                sb.append(String.format(Locale.ROOT, "%17d  %s\n", site.samples(), site.frame()));
+                rest -= site.samples();
+                long under = site.samples();
+                if (site.next().size() == 1 && site.next().getFirst().frame().equals(HotReport.AT_SITE)) {
+                    continue;
+                }
+                for (final HotReport.Count c : shown(site.next(), HotReport.NEXT_SHOWN)) {
+                    sb.append(String.format(Locale.ROOT, "%24d    %s\n", c.samples(), c.frame()));
+                    under -= c.samples();
+                }
+                if (under > 0) {
+                    sb.append(String.format(Locale.ROOT, "%24d    (%d more below)\n", under,
+                            site.next().size() - HotReport.NEXT_SHOWN));
+                }
+            }
+            if (rest > 0) {
+                sb.append(String.format(Locale.ROOT, "%17d  (%d more sites)\n", rest,
+                        g.sites().size() - HotReport.SITES_SHOWN));
+            }
+        }
+        if (r.groups().size() > top) {
+            sb.append(String.format(Locale.ROOT, "  %d more families, --top to list them\n", r.groups().size() - top));
+        }
+
+        sb.append("\nLEAF METHODS\n");
+        final TextTable leaves = new TextTable("Samples", "Share", "Method").numeric(0, 1);
+        for (final HotReport.Count c : shown(r.leaves(), top)) {
+            leaves.row(c.samples(), pct(r.share(c.samples())), c.frame());
+        }
+        sb.append(leaves.render("  "));
+
+        final List<HotReport.Group> heads = shown(r.groups(), HotReport.TIMELINE_GROUPS);
+        sb.append("\nTIMELINE (samples per ").append(Durations.format(r.bucketNanos())).append(", UTC)\n");
+        final List<String> headers = new ArrayList<>(List.of("From", "All"));
+        for (final HotReport.Group g : heads) {
+            headers.add(g.name());
+        }
+        final int[] numeric = new int[headers.size() - 1];
+        for (int i = 0; i < numeric.length; i++) {
+            numeric[i] = i + 1;
+        }
+        final TextTable timeline = new TextTable(headers.toArray(String[]::new)).numeric(numeric);
+        for (int b = 0; b < r.buckets(); b++) {
+            final List<Object> cells = new ArrayList<>(headers.size());
+            cells.add(Durations.clock(r.bucketStartNanos(b)));
+            cells.add(r.bucketTotal(b));
+            for (final HotReport.Group g : heads) {
+                cells.add(g.timeline().get(b));
+            }
+            timeline.row(cells.toArray());
+        }
+        sb.append(timeline.render("  "));
+        return sb.toString();
+    }
+
     static String stalls(final StallReport r, final int top) {
         final StringBuilder sb = new StringBuilder(header(r.info()));
         sb.append(settingsLine(r.info(), "Sampling", "jdk.ExecutionSample", "jdk.NativeMethodSample"));
@@ -891,6 +966,10 @@ final class Text {
 
     /** The head of a list under the same cap every other name list uses. */
     static <T> List<T> shown(final List<T> all) {
-        return all.size() > NAMES_SHOWN ? all.subList(0, NAMES_SHOWN) : all;
+        return shown(all, NAMES_SHOWN);
+    }
+
+    static <T> List<T> shown(final List<T> all, final int n) {
+        return all.size() > n ? all.subList(0, n) : all;
     }
 }

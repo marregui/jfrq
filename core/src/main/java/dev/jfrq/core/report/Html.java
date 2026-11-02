@@ -20,6 +20,7 @@ import dev.jfrq.core.alloc.AllocationReport;
 import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
+import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
@@ -372,6 +373,76 @@ public final class Html {
                 .append("\"></i>").append(escape(name)).append("</span> "));
         legend.append("</p>");
         return timeline(span, labels, rows) + legend;
+    }
+
+    /** {@code jfrq hot}: the same tables as the text, cut to the same limits. */
+    public static String hot(final HotReport r, final int top) {
+        final Page p = new Page("jfrq hot", r.info());
+        p.kv("Sampling", RecordingSummary.settings(r.info(), "jdk.ExecutionSample"));
+        if (r.samples() == 0) {
+            p.para("No execution samples. Record with the 'profile' or 'default' settings, or enable "
+                    + "jdk.ExecutionSample.");
+            return p.finish();
+        }
+        p.kv("Samples", r.samples() + " of threads running Java code, in " + r.groups().size()
+                + (r.groups().size() == 1 ? " family" : " families"));
+        p.kv("Sites", "a site is " + r.siteKey() + "; below it, the outermost frame outside the JDK under the site, "
+                + "else the frame the site called");
+        p.h2("By thread family");
+        p.tableStart("Family", "Threads", "Samples", "Share", "Site", "Site samples", "Below");
+        for (final HotReport.Group g : Json.top(r.groups(), top)) {
+            boolean first = true;
+            long rest = g.samples();
+            for (final HotReport.Site site : Json.top(g.sites(), HotReport.SITES_SHOWN)) {
+                final StringBuilder below = new StringBuilder();
+                long under = site.samples();
+                for (final HotReport.Count c : Json.top(site.next(), HotReport.NEXT_SHOWN)) {
+                    if (!below.isEmpty()) {
+                        below.append(", ");
+                    }
+                    below.append(c.frame()).append(' ').append(c.samples());
+                    under -= c.samples();
+                }
+                if (under > 0) {
+                    below.append(", ").append(site.next().size() - HotReport.NEXT_SHOWN).append(" more ").append(under);
+                }
+                p.row(first ? g.name() : "", first ? g.threads() : "", first ? g.samples() : "",
+                        first ? pct(r.share(g.samples())) : "", site.frame(), site.samples(), below);
+                first = false;
+                rest -= site.samples();
+            }
+            if (rest > 0) {
+                p.row("", "", "", "", "(" + (g.sites().size() - HotReport.SITES_SHOWN) + " more sites)", rest, "");
+            }
+        }
+        if (r.groups().size() > top) {
+            p.row("(" + (r.groups().size() - top) + " more families, --top to list them)", "", "", "", "", "", "");
+        }
+        p.tableEnd();
+        p.h2("Leaf methods");
+        p.tableStart("Samples", "Share", "Method");
+        for (final HotReport.Count c : Json.top(r.leaves(), top)) {
+            p.row(c.samples(), pct(r.share(c.samples())), c.frame());
+        }
+        p.tableEnd();
+        p.h2("Timeline (samples per " + Durations.format(r.bucketNanos()) + ", UTC)");
+        final List<HotReport.Group> heads = Json.top(r.groups(), HotReport.TIMELINE_GROUPS);
+        final List<String> headers = new ArrayList<>(List.of("From", "All"));
+        for (final HotReport.Group g : heads) {
+            headers.add(g.name());
+        }
+        p.tableStart(headers.toArray(String[]::new));
+        for (int b = 0; b < r.buckets(); b++) {
+            final List<Object> cells = new ArrayList<>(headers.size());
+            cells.add(Durations.clock(r.bucketStartNanos(b)));
+            cells.add(r.bucketTotal(b));
+            for (final HotReport.Group g : heads) {
+                cells.add(g.timeline().get(b));
+            }
+            p.row(cells.toArray());
+        }
+        p.tableEnd();
+        return p.finish();
     }
 
     public static String alloc(final AllocationReport report, final int top, final boolean sites, final SiteKey key) {

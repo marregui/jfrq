@@ -32,11 +32,13 @@ flowchart LR
     R --> S["StallCollector<br/>stalls"]
     R --> H["HealthCollector<br/>health"]
     R --> T["ThreadCensus<br/>info"]
+    R --> P["HotCollector<br/>hot"]
     A --> M["Report objects"]
     L --> M
     S --> M
     H --> M
     T --> M
+    P --> M
     M --> TX["Text"]
     M --> HT["HTML"]
     M --> J["JSON"]
@@ -51,6 +53,7 @@ event types those sinks ask for; everything else is skipped by the parser ([sect
 |---|---|---|
 | [stalls.md](stalls.md) | `stalls` | Idle detection, the three kinds of evidence, measured sampling cadence, pauses, merging |
 | [locks.md](locks.md) | `locks` | Waiting for work versus contention, holder resolution, convoys, perches, moved locks |
+| [hot.md](hot.md) | `hot` | Execution samples by family, site and the frame below it; the timeline |
 | [alloc.md](alloc.md) | `alloc` | The weighted estimate, first samples, counter calibration, sites, `--baseline` |
 | [health.md](health.md) | `health` | Findings, trends, throwables, thread CPU, native memory, several recordings |
 | [info.md](info.md) | `info` | Settings, thread families and census, attached threads, CPU per family, starts |
