@@ -226,6 +226,8 @@ jfrq-live growth before.txt after.txt later.txt       # the classes that grew fr
 `watch` is the loop of section 1 run by one process for a set time. It attaches once and
 keeps that JMX connection for every window, sample and histogram. It ends by itself.
 
+![A watch's time line: a window at every --every with its dump, questions and histogram, samples between windows, and the summary at the end](images/watch.svg)
+
 **Windows.** Every `--every` it takes a dump the way `delta` does (the same code: cursor,
 lock, clone, span check) into `wNN-HHmm.jfr` in the output directory: `NN` is the
 window's number, `HHmm` the UTC minute it ended. The first window is a `delta` from the
@@ -268,18 +270,28 @@ lists it as a finding; with `--histo`, a full collection of that cause is the wa
 
 **The end.** The watch exits with status 0 after `--for`, and at once when the JVM
 exits, with the time it went. Ctrl-C (or `SIGTERM`) abandons a dump in progress the way
-section 2 describes, waits at most ten seconds for the window in progress, and writes the
-summary. A connection that drops is opened again once; a second drop ends the watch with
-status 1. A window that fails on a good connection (the recording was stopped meanwhile)
-is a line in the summary, and the next window's delta covers its time. Every new call
-over the connection has a deadline: ten seconds for a sample, two minutes for a
-histogram, after which the JVM is reported as not answering.
+section 2 describes, waits at most ten seconds for the window in progress, writes the
+summary, and gives the JVM two seconds to answer the connection's close; a JVM that has
+exited is not asked. Every call over the connection has a deadline: ten seconds for a
+sample, two minutes for a histogram, and none reaches past `--for` plus 30 seconds, so a
+JVM that stops answering (frozen, swapping, held in a debugger) cannot keep the watch
+past that. A JVM that does not answer is connected to again once; a second time, or a
+first one after `--for`, ends the watch with status 1. A window that fails on a good
+connection is a line in the summary, and the next window's delta covers its time; when
+the recording itself was stopped or closed, no later window can succeed, and the watch
+ends there with status 1 and says so. A watch whose time was up but that has a failed
+window also exits 1. Window slots missed while the watch was held up (a laptop asleep, a
+slow call) are skipped, not taken back to back: each would cost a dump and, with
+`--histo`, a full GC, and histograms taken milliseconds apart hide a class that grows.
+The next window's delta covers their time.
 
 **The summary**, on standard output and in `summary.txt`: a row per window with its
 span, file, dump size, wall time for the whole window (dump, histogram, questions), wall
 time of the dump alone, and the range of the samples taken in it (process CPU, heap used,
-threads, file descriptors); then failed windows and questions that did not exit with 0;
-with `--histo`, the growth table of all the histograms.
+threads, file descriptors); then failed windows, with the window whose delta covers their
+time, questions that did not exit with 0, reconnects (with the gap they leave in
+`samples.tsv`), skipped window slots and histograms that failed; with `--histo`, the
+growth table of all the histograms.
 
 **Its own cost**, measured with `/usr/bin/time -l` on a watch of 6 minutes, a window
 every 2 minutes, a sample every 20 s, `--histo`, `--ask 'hot --app ...'` and

@@ -3,8 +3,10 @@
 
 package dev.jfrq.core.waits;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.jfr.EventKinds;
@@ -25,6 +27,15 @@ import dev.jfrq.core.jfr.RecordingInfo;
  */
 public record WaitReport(RecordingInfo info, String siteKey, long totalNanos, long waits, long clipped,
         List<Monitor> classes) {
+
+    /** How many classes were waited on: a class waited on and parked on is one, though it is two rows. */
+    public int distinctClasses() {
+        final Set<String> names = new HashSet<>();
+        for (final Monitor m : classes) {
+            names.add(m.className());
+        }
+        return names.size();
+    }
 
     /** Frames listed below each site by text and HTML; the rest are summed on one line. */
     public static final int BELOW_SHOWN = 3;

@@ -473,7 +473,7 @@ public final class Live {
         }
         final Path file = Path.of(to.orElseThrow());
         Files.writeString(file, text, StandardCharsets.UTF_8);
-        final Histogram h = Histogram.parse(text);
+        final Histogram h = Histogram.parse(text, file.toString());
         long instances = 0;
         long bytes = 0;
         for (final long[] counts : h.classes().values()) {

@@ -34,23 +34,35 @@ record Histogram(Map<String, long[]> classes) {
     /** {@code   12:   4607   405416  java.lang.reflect.Method (java.base@25)}: the module is optional. */
     private static final Pattern ROW = Pattern.compile("^\\s*\\d+:\\s+(\\d+)\\s+(\\d+)\\s+(\\S+).*$");
 
-    /** The rows of {@code text}; the header, the pid line {@code jcmd} prints first and the total are skipped. */
-    static Histogram parse(final String text) {
+    /**
+     * The rows of {@code text}; the header, the pid line {@code jcmd} prints first and the total are skipped.
+     *
+     * @param source names the text in the error, a file or the JVM
+     * @throws IOException when a row's count does not fit a {@code long}, naming {@code source} and the line
+     */
+    static Histogram parse(final String text, final String source) throws IOException {
         final Map<String, long[]> classes = new HashMap<>();
+        int lineNo = 0;
         for (final String line : text.split("\n", -1)) {
+            lineNo++;
             final Matcher m = ROW.matcher(line);
             if (m.matches()) {
                 final long[] counts = classes.computeIfAbsent(m.group(3), k -> new long[2]);
-                counts[0] += Long.parseLong(m.group(1));
-                counts[1] += Long.parseLong(m.group(2));
+                try {
+                    counts[0] += Long.parseLong(m.group(1));
+                    counts[1] += Long.parseLong(m.group(2));
+                } catch (final NumberFormatException e) {
+                    throw new IOException(source + " line " + lineNo + ": a count does not fit 64 bits: "
+                            + line.strip(), e);
+                }
             }
         }
         return new Histogram(classes);
     }
 
-    /** @throws IOException when the file cannot be read, or holds no histogram row */
+    /** @throws IOException when the file cannot be read, holds no histogram row, or a row does not parse */
     static Histogram read(final Path file) throws IOException {
-        final Histogram h = parse(Files.readString(file, StandardCharsets.UTF_8));
+        final Histogram h = parse(Files.readString(file, StandardCharsets.UTF_8), file.toString());
         if (h.classes().isEmpty()) {
             throw new IOException(file + " holds no class histogram rows (num: #instances #bytes class name)");
         }

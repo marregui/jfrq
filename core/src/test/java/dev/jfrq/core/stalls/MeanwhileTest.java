@@ -13,6 +13,7 @@ import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.stalls.Stall.LockHolder;
 import dev.jfrq.core.stalls.Stall.Verdict;
 import dev.jfrq.core.stalls.Timeline.Block;
 import dev.jfrq.core.stalls.Timeline.BlockKind;
@@ -115,6 +116,81 @@ class MeanwhileTest {
         final Stall nobody = loopStall(parkedWhile(unknown, painter));
         assertTrue(nobody.detail().endsWith("held by unknown"), nobody.detail());
         assertEquals(PAINTER, nobody.meanwhile().getFirst().thread());
+    }
+
+    /// One blocking event says whether it is a lock and whether its holder is recorded; events
+    /// combined name a holder if any of them does, and make no lock only if none of them is one.
+    @Test
+    void aLockHolderIsReadFromTheEventsAndCombinedSoAKnownHolderWins() {
+        final Interval at = new Interval(0, 100 * MS);
+        assertEquals(LockHolder.UNRECORDED, LockHolder.of(new Block(at, BlockKind.PARK, "on X@1", LOCKING, false)));
+        assertEquals(LockHolder.NOT_A_LOCK,
+                LockHolder.of(new Block(at, BlockKind.PARK, ParkShapes.NO_BLOCKER, LOCKING, false)));
+        assertEquals(LockHolder.KNOWN, LockHolder.of(new Block(at, BlockKind.MONITOR, "X@1", LOCKING, HOLDER)));
+        assertEquals(LockHolder.UNRECORDED, LockHolder.of(new Block(at, BlockKind.MONITOR, "X@1", LOCKING, null)));
+        for (final BlockKind kind : List.of(BlockKind.OBJECT_WAIT, BlockKind.SLEEP, BlockKind.SOCKET_READ,
+                BlockKind.SOCKET_WRITE, BlockKind.FILE_READ, BlockKind.FILE_WRITE, BlockKind.FILE_FORCE)) {
+            assertEquals(LockHolder.NOT_A_LOCK, LockHolder.of(new Block(at, kind, "x", LOCKING, false)), kind.name());
+        }
+        for (final LockHolder h : LockHolder.values()) {
+            assertEquals(LockHolder.KNOWN, h.and(LockHolder.KNOWN));
+            assertEquals(LockHolder.KNOWN, LockHolder.KNOWN.and(h));
+            assertEquals(h, h.and(LockHolder.NOT_A_LOCK));
+            assertEquals(h, LockHolder.NOT_A_LOCK.and(h));
+        }
+        assertEquals(LockHolder.UNRECORDED, LockHolder.UNRECORDED.and(LockHolder.UNRECORDED));
+    }
+
+    /// A silence that twenty short parks on a lock explain together is a lock with no recorded
+    /// holder; twenty monitor waits of which one names a holder are a lock whose holder is known.
+    @Test
+    void aSilenceManyWaitsExplainCarriesTheirHolder() {
+        final ThreadTimeline painter = new ThreadTimeline(PAINTER, samples(1_000, 2_000, 50, BLIT, true), List.of());
+        final List<Block> parks = new ArrayList<>();
+        final List<Block> monitors = new ArrayList<>();
+        for (int k = 0; k < 20; k++) {
+            final Interval each = new Interval((1_000 + 50L * k) * MS, (1_040 + 50L * k) * MS);
+            parks.add(new Block(each, BlockKind.PARK, "on java.util.concurrent.locks.ReentrantLock$NonfairSync@1",
+                    LOCKING, false));
+            monitors.add(new Block(each, BlockKind.MONITOR, "dev.app.Registry@1", LOCKING, k == 1 ? HOLDER : null));
+        }
+        final Stall parked = silenceOf(parks, painter);
+        assertEquals(Verdict.PARKED, parked.verdict());
+        assertTrue(parked.detail().startsWith("20 × parked on"), parked.detail());
+        assertEquals(LockHolder.UNRECORDED, parked.holder());
+        assertEquals(PAINTER, parked.meanwhile().getFirst().thread());
+
+        final Stall blocked = silenceOf(monitors, painter);
+        assertEquals(Verdict.BLOCKED_MONITOR, blocked.verdict());
+        assertEquals(LockHolder.KNOWN, blocked.holder());
+        assertTrue(blocked.meanwhile().isEmpty(), blocked.meanwhile().toString());
+    }
+
+    /// Marking a silence simultaneous with another thread's, and cutting a run's tail, rewrite the
+    /// detail and the interval, never what the stall rests on.
+    @Test
+    void rewritingAStallKeepsItsHolder() {
+        final Interval at = new Interval(0, 100 * MS);
+        final Stall a = new Stall(LOOP, at, Verdict.UNEXPLAINED, "a", Stack.EMPTY, Stall.Evidence.SILENCE, 0,
+                LockHolder.UNRECORDED);
+        final Stall b = new Stall(OTHER, at, Verdict.UNEXPLAINED, "b", Stack.EMPTY, Stall.Evidence.SILENCE, 0,
+                LockHolder.KNOWN);
+        final List<Stall> marked = StallAnalysis.markSimultaneous(List.of(a, b));
+        assertTrue(marked.getFirst().detail().contains("simultaneous on 2"), marked.getFirst().detail());
+        assertEquals(LockHolder.UNRECORDED, marked.getFirst().holder());
+        assertEquals(LockHolder.KNOWN, marked.getLast().holder());
+    }
+
+    /** LOOP idle every 20 ms but for a silence from 1,000 to 2,000 ms that {@code blocks} explain. */
+    private static Stall silenceOf(final List<Block> blocks, final ThreadTimeline other) {
+        final List<Sample> loop = new ArrayList<>(idle(0, 1_000, 20));
+        loop.addAll(idle(2_000, 3_000, 20));
+        final StallReport r = new StallAnalysis(50 * MS).analyse(sampledInfo(),
+                List.of(new ThreadTimeline(LOOP, loop, blocks), other), List.of());
+        assertEquals(1, r.stallsOf(LOOP).size(), r.stallsOf(LOOP).toString());
+        final Stall s = r.stallsOf(LOOP).getFirst();
+        assertEquals(Stall.Evidence.SILENCE, s.evidence());
+        return s;
     }
 
     /// A park on no object has nothing anyone holds, and a sleep is the thread's own: neither

@@ -747,14 +747,14 @@ final class Text {
                     + "recording made with either started no process in its span.\n");
             return sb.toString();
         }
-        sb.append(String.format(Locale.ROOT, "%-10s %d started, %.1f per minute, %d command%s\n", "Processes",
-                r.starts(), r.perMinute(r.starts()), r.commands().size(), r.commands().size() == 1 ? "" : "s"));
+        sb.append(String.format(Locale.ROOT, "%-10s %d started, %s per minute, %d command%s\n", "Processes",
+                r.starts(), r.perMinuteText(r.starts()), r.commands().size(), r.commands().size() == 1 ? "" : "s"));
         sb.append(wrap("a command is the basename of the command line's first word; a site is " + r.siteKey(),
                 String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
 
         sb.append("\nBY COMMAND\n");
         for (final ProcessReport.Command c : shown(r.commands(), top)) {
-            sb.append(String.format(Locale.ROOT, "%8d %8.1f/min  %s\n", c.starts(), r.perMinute(c.starts()),
+            sb.append(String.format(Locale.ROOT, "%8d %8s/min  %s\n", c.starts(), r.perMinuteText(c.starts()),
                     c.command()));
             sb.append("                    threads  ").append(ProcessReport.listed(c.threads())).append('\n');
             sb.append("                    sites    ").append(ProcessReport.listed(c.sites())).append('\n');
@@ -771,7 +771,7 @@ final class Text {
         final TextTable families = new TextTable("Starts", "Per min", "Family", "Threads", "Commands")
                 .numeric(0, 1, 3);
         for (final ProcessReport.Family f : shown(r.families(), top)) {
-            families.row(f.starts(), String.format(Locale.ROOT, "%.1f", r.perMinute(f.starts())), f.name(),
+            families.row(f.starts(), r.perMinuteText(f.starts()), f.name(),
                     f.threads(), ProcessReport.listed(f.commands()));
         }
         sb.append(families.render("  "));
@@ -791,9 +791,10 @@ final class Text {
                     + "'jfrq info'.\n");
             return sb.toString();
         }
+        final int classes = r.distinctClasses();
         sb.append(String.format(Locale.ROOT, "%-10s %s across %d wait%s on %d class%s\n", "Waited",
-                Durations.format(r.totalNanos()), r.waits(), r.waits() == 1 ? "" : "s", r.classes().size(),
-                r.classes().size() == 1 ? "" : "es"));
+                Durations.format(r.totalNanos()), r.waits(), r.waits() == 1 ? "" : "s", classes,
+                classes == 1 ? "" : "es"));
         if (r.clipped() > 0) {
             sb.append(String.format(Locale.ROOT, "%-10s %d wait%s began before the recording or outlived it; "
                     + "only the part inside it is counted\n", "Note", r.clipped(), r.clipped() == 1 ? "" : "s"));
@@ -809,32 +810,32 @@ final class Text {
             sb.append(String.format(Locale.ROOT, "  %2d  %-4s  %s  %s across %d wait%s, longest %s\n", n++,
                     m.kind().label(), ClassNames.pretty(m.className()), Durations.format(m.totalNanos()), m.waits(),
                     m.waits() == 1 ? "" : "s", Durations.format(m.maxNanos())));
-            long rest = m.totalNanos();
+            long restNanos = m.totalNanos();
             long restWaits = m.waits();
             for (final WaitReport.Site site : shown(m.sites(), top)) {
                 sb.append(String.format(Locale.ROOT, "%18s %7d  %s\n", Durations.format(site.totalNanos()),
                         site.waits(), site.frame()));
-                rest -= site.totalNanos();
+                restNanos -= site.totalNanos();
                 restWaits -= site.waits();
                 if (site.below().size() == 1 && site.below().getFirst().frame().equals(SiteKey.AT_SITE)) {
                     continue;
                 }
-                long under = site.totalNanos();
+                long underNanos = site.totalNanos();
                 long underWaits = site.waits();
                 for (final WaitReport.Below b : shown(site.below(), WaitReport.BELOW_SHOWN)) {
                     sb.append(String.format(Locale.ROOT, "%26s %7d    %s\n", Durations.format(b.totalNanos()),
                             b.waits(), b.frame()));
-                    under -= b.totalNanos();
+                    underNanos -= b.totalNanos();
                     underWaits -= b.waits();
                 }
                 if (underWaits > 0) {
-                    sb.append(String.format(Locale.ROOT, "%26s %7d    (%d more below)\n", Durations.format(under),
+                    sb.append(String.format(Locale.ROOT, "%26s %7d    (%d more below)\n", Durations.format(underNanos),
                             underWaits, site.below().size() - WaitReport.BELOW_SHOWN));
                 }
             }
             if (restWaits > 0) {
                 sb.append(String.format(Locale.ROOT, "%18s %7d  (%d more sites, --top to list them)\n",
-                        Durations.format(rest), restWaits, m.sites().size() - top));
+                        Durations.format(restNanos), restWaits, m.sites().size() - top));
             }
         }
         if (r.classes().size() > top) {

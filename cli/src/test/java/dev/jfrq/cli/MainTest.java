@@ -823,6 +823,7 @@ class MainTest {
 
         final Map<String, Object> json = JsonParser.object(Json.stalls(r, 10, "test"));
         final Map<?, ?> stall = (Map<?, ?>) ((List<?>) json.get("stalls")).getFirst();
+        assertEquals("UNRECORDED", stall.get("holder"));
         final Map<?, ?> meanwhile = (Map<?, ?>) ((List<?>) stall.get("meanwhile")).getFirst();
         assertEquals("AppKit Thread", meanwhile.get("thread"));
         assertEquals(0L, meanwhile.get("javaSamples"));

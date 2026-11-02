@@ -39,9 +39,14 @@ import dev.jfrq.core.util.Durations;
  * each window. It ends by itself after {@code --for}, at once when the JVM exits, or on
  * Ctrl-C, and always with the summary table, on standard output and in {@code summary.txt}.
  *
- * <p>A connection that drops is opened again once; a second drop ends the watch with
- * status 1. A window that fails while the connection is good (a recording stopped meanwhile)
- * is a line in the summary, and the next window's delta covers its time.
+ * <p>Every call over the connection has a deadline, and none reaches past {@code --for} plus
+ * {@link #GRACE}: a JVM that stops answering cannot keep the watch beyond that. A connection
+ * that does not answer is opened again once; a second time ends the watch with status 1. A
+ * window that fails while the connection is good is a line in the summary, and the next
+ * window's delta covers its time; when the recording itself is gone or no longer running, no
+ * later window can succeed and the watch ends with status 1. Window slots missed while the
+ * watch was held up (a sleeping host, a slow call) are skipped, not taken back to back: the
+ * next window's delta covers their time. A watch that ends with a failed window exits 1.
  */
 final class Watch {
 
@@ -49,6 +54,12 @@ final class Watch {
     static final Duration SAMPLE_TIMEOUT = Duration.ofSeconds(10);
     /** How long the JVM has to answer a class histogram: a full GC of a large heap takes seconds. */
     static final Duration HISTO_TIMEOUT = Duration.ofMinutes(2);
+    /** How long past {@code --for} a call in flight may wait for the JVM to answer. */
+    static final Duration GRACE = Duration.ofSeconds(30);
+    /** How long the JVM has to answer the close of the connection. */
+    private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(2);
+    /** Why a call failed when the JVM was gone by the time it was looked at. */
+    private static final String JVM_EXITED = "the JVM exited";
     /** How long Ctrl-C waits for the window in progress before the summary is written without it. */
     private static final long STOP_WAIT_MILLIS = 10_000;
     /** How often the wait between events checks that the JVM is still there. */
@@ -85,6 +96,8 @@ final class Watch {
     private final List<Row> rows = new ArrayList<>();
     private final List<Point> points = new ArrayList<>();
     private final List<Path> histograms = new ArrayList<>();
+    /** What the summary must say beyond its table: reconnects, skipped slots, failed histograms. */
+    private final List<String> notes = new ArrayList<>();
     private Jvm jvm;
     private RecordingInfo recording;
     private boolean reconnected;
@@ -96,6 +109,7 @@ final class Watch {
     /** Counted down by the main thread when its loop is over, awaited by the shutdown hook. */
     private final CountDownLatch looped = new CountDownLatch(1);
     private long startNanos;
+    private long endNanos;
 
     Watch(final Plan plan, final PrintStream out, final PrintStream err) {
         this.plan = plan;
@@ -138,8 +152,14 @@ final class Watch {
         try {
             Live.line(out, header());
             startNanos = System.nanoTime();
+            endNanos = startNanos + plan.forNanos();
             ended = loop(Instant.now());
-        } catch (final ConnectionLost e) {
+            final int failed = failedWindows();
+            if (failed > 0) {
+                ended = String.format(Locale.ROOT, "%s, with %d of %d windows failed", ended, failed, rows.size());
+                status = 1;
+            }
+        } catch (final CutShort e) {
             ended = e.getMessage();
             status = 1;
         } catch (final IOException e) {
@@ -163,8 +183,7 @@ final class Watch {
     }
 
     /** The events in time order until the end; returns why it ended. */
-    private String loop(final Instant startInstant) throws IOException, ConnectionLost {
-        final long endNanos = startNanos + plan.forNanos();
+    private String loop(final Instant startInstant) throws IOException, CutShort {
         int window = 1;
         Instant begin = startInstant;
         sample(1);
@@ -197,9 +216,55 @@ final class Watch {
                 }
                 window++;
                 begin = end;
-                nextWindowNanos = Math.min(nextWindowNanos + plan.everyNanos(), endNanos);
+                nextWindowNanos = nextWindow(nextWindowNanos, window - 1);
             }
         }
+    }
+
+    /**
+     * The slot after {@code dueNanos} that is still ahead: slots missed while the watch was held
+     * up are skipped, not taken back to back, since each would cost a dump (and with
+     * {@code --histo} a full GC) and histograms taken milliseconds apart hide a growing class.
+     */
+    private long nextWindow(final long dueNanos, final int taken) {
+        final long nowNanos = System.nanoTime();
+        long next = dueNanos + plan.everyNanos();
+        int skipped = 0;
+        while (next - nowNanos <= 0 && next - endNanos < 0) {
+            next += plan.everyNanos();
+            skipped++;
+        }
+        if (skipped > 0) {
+            note(String.format(Locale.ROOT, "%d window slot%s skipped after window %d: the watch was held up (a "
+                    + "sleeping host, a slow call); the next window covers %s time", skipped,
+                    skipped == 1 ? " was" : "s were", taken, skipped == 1 ? "its" : "their"));
+        }
+        return next - endNanos < 0 ? next : endNanos;
+    }
+
+    /** What is left before {@code --for} plus {@link #GRACE}: the bound of a call that has none of its own. */
+    private Duration untilEnd() {
+        return bound(Duration.ofNanos(Long.MAX_VALUE));
+    }
+
+    /** {@code cap}, cut to what is left before {@code --for} plus {@link #GRACE}; at least 1 ms. */
+    private Duration bound(final Duration cap) {
+        final long leftNanos = endNanos + GRACE.toNanos() - System.nanoTime();
+        return Duration.ofNanos(Math.max(1_000_000, Math.min(cap.toNanos(), leftNanos)));
+    }
+
+    private synchronized void note(final String text) {
+        notes.add(text);
+    }
+
+    private synchronized int failedWindows() {
+        int failed = 0;
+        for (final Row r : rows) {
+            if (r.failure() != null && !JVM_EXITED.equals(r.failure())) {
+                failed++;
+            }
+        }
+        return failed;
     }
 
     /** Sleeps until {@code dueNanos}; false as soon as the JVM is gone or the watch is stopped. */
@@ -238,10 +303,10 @@ final class Watch {
                 plan.dir());
     }
 
-    private void sample(final int window) throws IOException, ConnectionLost {
+    private void sample(final int window) throws IOException, CutShort {
         final Jvm.Sample s;
         try {
-            s = jvm.sample(SAMPLE_TIMEOUT);
+            s = jvm.sample(bound(SAMPLE_TIMEOUT));
         } catch (final IOException | RuntimeException e) {
             recover("a sample", e);
             return;
@@ -255,8 +320,9 @@ final class Watch {
             cpuPct = 100.0 * (s.processCpuNanos() - previous.processCpuNanos()) / (s.atNanos() - previous.atNanos());
         }
         previous = s;
-        final String line = String.join("\t", Live.DATE_TIME.format(Instant.now()), Double.isNaN(cpuPct) ? "" : pct(cpuPct),
-                Double.isNaN(systemPct) ? "" : pct(systemPct), Long.toString(s.heapUsedBytes()),
+        final String line = String.join("\t", Live.DATE_TIME.format(Instant.now()),
+                Double.isNaN(cpuPct) ? "" : pct(cpuPct), Double.isNaN(systemPct) ? "" : pct(systemPct),
+                Long.toString(s.heapUsedBytes()),
                 Long.toString(s.heapCommittedBytes()), Long.toString(s.threads()), cell(s.openFds()),
                 cell(s.committedVirtualBytes()));
         synchronized (this) {
@@ -278,13 +344,17 @@ final class Watch {
         return value < 0 ? "" : Long.toString(value);
     }
 
-    private void histogram(final String base) throws IOException, ConnectionLost {
+    private void histogram(final String base) throws IOException, CutShort {
         final Path file = plan.dir().resolve(base + ".histo.txt");
         final String text;
         try {
-            text = jvm.classHistogram(HISTO_TIMEOUT);
+            text = jvm.classHistogram(bound(HISTO_TIMEOUT));
         } catch (final IOException | RuntimeException e) {
-            recover("a class histogram", e);
+            final String why = recover("a class histogram", e);
+            if (!JVM_EXITED.equals(why)) {
+                note("the class histogram " + file.getFileName() + " failed: " + why
+                        + "; the growth table has one histogram fewer");
+            }
             return;
         }
         Files.writeString(file, text, StandardCharsets.UTF_8);
@@ -292,10 +362,10 @@ final class Watch {
             histograms.add(file);
         }
         Live.line(out, String.format(Locale.ROOT, "Histogram  %s  %,d classes", file.getFileName(),
-                Histogram.parse(text).classes().size()));
+                Histogram.parse(text, file.toString()).classes().size()));
     }
 
-    private void window(final int index, final Instant begin, final Instant end) throws IOException, ConnectionLost {
+    private void window(final int index, final Instant begin, final Instant end) throws IOException, CutShort {
         final long t0Nanos = System.nanoTime();
         final String base = String.format(Locale.ROOT, "w%0" + width() + "d-%s", index, STAMP.format(end));
         final Path file = plan.dir().resolve(base + ".jfr");
@@ -305,13 +375,21 @@ final class Watch {
         final Live.Taken taken;
         final String command;
         try {
+            final Jvm on = jvm;
+            final RecordingInfo of = recording;
             // A first window needs a cursor to be a delta: without one it is everything the recording holds.
-            command = Cursor.load(stateDir, plan.pid(), jvm.startTime()).next() == null ? "full" : "delta";
-            taken = Live.take(jvm, command, recording, stateDir, file, true, err);
+            command = Cursor.load(stateDir, plan.pid(), Jvm.within(on::startTime, bound(SAMPLE_TIMEOUT),
+                    "the window's dump")).next() == null ? "full" : "delta";
+            // The dump's own bound is the watch's end: a JVM that stops answering cannot hold it past --for.
+            taken = Jvm.within(() -> Live.take(on, command, of, stateDir, file, true, err), untilEnd(),
+                    "the window's dump");
         } catch (final IOException | RuntimeException e) {
             final String why = recover("the window's dump", e);
             synchronized (this) {
                 rows.add(new Row(index, begin, end, base, -1, 0, System.nanoTime() - t0Nanos, List.of(), why));
+            }
+            if (!JVM_EXITED.equals(why)) {
+                requireRunning();
             }
             return;
         }
@@ -346,26 +424,27 @@ final class Watch {
     }
 
     /**
-     * What a failed call means. The JVM gone ends the watch at the next check; a connection
-     * that no longer answers is opened again, once; a call that failed on a good connection
-     * is the call's own failure, returned as the reason.
+     * What a failed call means. The JVM gone ends the watch at the next check; a call that
+     * failed on a good connection is the call's own failure, returned as the reason; a
+     * connection that does not answer is opened again, once, unless the watch is past
+     * {@code --for} or stopping, which ends it.
      */
-    private String recover(final String what, final Exception e) throws ConnectionLost {
+    private String recover(final String what, final Exception e) throws CutShort {
         final String why = e instanceof final IOException io ? Main.describe(io)
                 : e instanceof final RuntimeException r ? Live.failure(r) : e.toString();
         if (!alive()) {
-            return "the JVM exited";
+            return JVM_EXITED;
         }
         if (connected()) {
-            Live.line(err, "jfrq-live: " + what + " failed: " + why);
+            Live.line(err, "jfrq-live: " + what + ": " + why);
             return why;
         }
-        if (reconnected || stopping) {
-            throw new ConnectionLost("the connection to JVM " + plan.pid() + " was lost twice; the last time during "
-                    + what + ": " + why);
+        if (reconnected || stopping || System.nanoTime() - endNanos >= 0) {
+            throw new CutShort("JVM " + plan.pid() + " no longer answers" + (reconnected ? " (connected again once)" : "")
+                    + ": " + why);
         }
         reconnected = true;
-        Live.line(err, "jfrq-live: the connection to JVM " + plan.pid() + " was lost during " + what + " (" + why
+        Live.line(err, "jfrq-live: JVM " + plan.pid() + " did not answer " + what + " (" + why
                 + "); connecting again");
         final Jvm old;
         synchronized (this) {
@@ -373,38 +452,67 @@ final class Watch {
             jvm = null;
         }
         try {
-            old.close();
+            old.close(CLOSE_TIMEOUT);
         } catch (final IOException | RuntimeException c) {
-            Live.line(err, "jfrq-live: warning: the broken connection did not close cleanly: " + c);
+            Live.line(err, "jfrq-live: warning: the connection that did not answer did not close: " + c);
         }
         try {
-            final Jvm again = Jvm.attach(plan.pid(), err);
+            final Jvm again = Jvm.within(() -> Jvm.attach(plan.pid(), err), untilEnd(), "the attach");
             synchronized (this) {
                 jvm = again;
             }
-            recording = Live.pick(again, plan.args());
+            recording = Jvm.within(() -> Live.pick(again, plan.args()), bound(SAMPLE_TIMEOUT), "the recordings' list");
         } catch (final IOException | RuntimeException a) {
-            throw new ConnectionLost("the connection to JVM " + plan.pid() + " was lost and could not be opened again: "
-                    + (a instanceof final IOException io ? Main.describe(io) : a.toString()));
+            throw new CutShort("JVM " + plan.pid() + " did not answer " + what + " and could not be connected to "
+                    + "again: " + (a instanceof final IOException io ? Main.describe(io) : a.toString()));
         }
+        note("connected again at " + CLOCK.format(Instant.now()) + "Z after JVM " + plan.pid() + " did not answer "
+                + what + " (" + why + "); samples.tsv has no rows for that time");
         return why + " (connected again)";
     }
 
     private boolean connected() {
         try {
-            Jvm.within(jvm::startTime, SAMPLE_TIMEOUT, "a connection check");
+            Jvm.within(jvm::startTime, bound(SAMPLE_TIMEOUT), "a connection check");
             return true;
         } catch (final IOException | UndeclaredThrowableException e) {
             return false;
         }
     }
 
-    /** The watch's end that is not the JVM's: a connection lost for good. */
-    static final class ConnectionLost extends Exception {
+    /**
+     * Ends the watch when its recording is gone or no longer running: no later window could
+     * succeed, so going on would claim time it does not cover. A check that itself fails
+     * leaves the window's own failure as the reason.
+     */
+    private void requireRunning() throws CutShort {
+        final long id = recording.getId();
+        final List<RecordingInfo> all;
+        try {
+            final Jvm on = jvm;
+            all = Jvm.within(() -> on.flightRecorder().getRecordings(), bound(SAMPLE_TIMEOUT), "the recordings' list");
+        } catch (final IOException | RuntimeException e) {
+            return;
+        }
+        for (final RecordingInfo r : all) {
+            if (r.getId() == id) {
+                if (!"RUNNING".equals(r.getState())) {
+                    throw new CutShort("recording " + id + " " + r.getName() + " is " + r.getState()
+                            + "; no later window can be taken");
+                }
+                return;
+            }
+        }
+        throw new CutShort("recording " + id + " " + recording.getName() + " was stopped and closed; no later "
+                + "window can be taken");
+    }
+
+    /** A watch cut short by something other than the JVM's exit or Ctrl-C; it exits 1. */
+    static final class CutShort extends Exception {
         @Serial
         private static final long serialVersionUID = 1L;
 
-        ConnectionLost(final String message) {
+        CutShort(final String message) {
             super(message);
         }
     }
@@ -450,12 +558,13 @@ final class Watch {
                 Live.line(err, "jfrq-live: samples.tsv did not close cleanly: " + Main.describe(e));
             }
         }
-        if (jvm != null) {
+        // A JVM that is gone has nothing to say goodbye to: closing would only wait on RMI.
+        if (jvm != null && alive()) {
             try {
-                jvm.close();
+                jvm.close(CLOSE_TIMEOUT);
             } catch (final IOException | RuntimeException e) {
-                Live.line(err, "jfrq-live: warning: the connection to JVM " + plan.pid() + " did not close cleanly: "
-                        + e);
+                Live.line(err, "jfrq-live: warning: the connection to JVM " + plan.pid() + " did not close: "
+                        + (e instanceof final IOException io ? Main.describe(io) : e.toString()));
             }
         }
     }
@@ -482,14 +591,20 @@ final class Watch {
         }
         for (final Row r : rows) {
             if (r.failure() != null) {
-                sb.append(String.format(Locale.ROOT, "  window %d failed: %s; the next window's delta covers its "
-                        + "time\n", r.index(), r.failure()));
+                final Row later = rows.stream().filter(o -> o.index() > r.index() && o.bytes() >= 0).findFirst()
+                        .orElse(null);
+                sb.append(String.format(Locale.ROOT, "  window %d has no dump (%s); %s\n", r.index(), r.failure(),
+                        later == null ? "no later window covers its time"
+                                : "window " + later.index() + "'s delta covers its time"));
             }
             for (final String a : r.answers()) {
                 if (!a.contains("(exit 0,")) {
                     sb.append("  window ").append(r.index()).append(": ").append(a).append('\n');
                 }
             }
+        }
+        for (final String n : notes) {
+            sb.append("  ").append(n).append('\n');
         }
         if (histograms.size() >= 2) {
             final List<Histogram> read = new ArrayList<>();

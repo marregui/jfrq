@@ -63,8 +63,8 @@ class HistogramTest {
 
     /// The rows are read with or without a module; the pid line, the header and the total are not rows.
     @Test
-    void parsesTheRowsAndNothingElse() {
-        final Histogram h = Histogram.parse(START);
+    void parsesTheRowsAndNothingElse() throws IOException {
+        final Histogram h = Histogram.parse(START, "START");
         assertEquals(5, h.classes().size());
         assertEquals(78239, h.instances("[B"));
         assertEquals(23957512, h.bytes("[B"));
@@ -75,20 +75,20 @@ class HistogramTest {
 
     /// Two rows of one name, a class loaded by two loaders, count as one class.
     @Test
-    void twoRowsOfOneNameAreAddedTogether() {
+    void twoRowsOfOneNameAreAddedTogether() throws IOException {
         final Histogram h = Histogram.parse("""
                    1:   10   100  a.B
                    2:    5    50  a.B
-                """);
+                """, "inline");
         assertEquals(15, h.instances("a.B"));
         assertEquals(150, h.bytes("a.B"));
     }
 
     /// A grower grew in instances and bytes at every step; a class that shrank once, or held still once, is not one.
     @Test
-    void growersGrewAtEveryStep() {
+    void growersGrewAtEveryStep() throws IOException {
         final List<Histogram.Grower> growers = Histogram.growers(
-                List.of(Histogram.parse(START), Histogram.parse(MIDDLE), Histogram.parse(END)));
+                List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE"), Histogram.parse(END, "END")));
         // [I shrank; Undo$Record held still from the middle to the end; the lambda left.
         assertEquals(List.of("[B", "java.lang.String",
                 "javax.swing.text.AbstractDocument$DefaultDocumentEventUndoableWrapper"),
@@ -100,18 +100,18 @@ class HistogramTest {
     /// A class absent from the first histogram counts as 0 there, so a class that appeared and kept growing is a
     /// grower.
     @Test
-    void anAbsentClassCountsAsZero() {
+    void anAbsentClassCountsAsZero() throws IOException {
         final List<Histogram.Grower> growers = Histogram.growers(
-                List.of(Histogram.parse(START), Histogram.parse(MIDDLE)));
+                List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE")));
         assertTrue(growers.stream().anyMatch(g -> g.name().equals("dev.marregui.comando.Undo$Record")));
-        assertThrows(IllegalArgumentException.class, () -> Histogram.growers(List.of(Histogram.parse(START))));
+        assertThrows(IllegalArgumentException.class, () -> Histogram.growers(List.of(Histogram.parse(START, "START"))));
     }
 
     /// The table names the files in order, ranks growers by bytes and lists each one's counts per file.
     @Test
-    void theTableListsEachGrowersCountsPerFile() {
+    void theTableListsEachGrowersCountsPerFile() throws IOException {
         final String table = Histogram.table(List.of("start.txt", "middle.txt", "end.txt"),
-                List.of(Histogram.parse(START), Histogram.parse(MIDDLE), Histogram.parse(END)), 2);
+                List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE"), Histogram.parse(END, "END")), 2);
         assertTrue(table.contains("   1  start.txt\n   2  middle.txt\n   3  end.txt\n"), table);
         assertTrue(table.contains("Growers    3 of 6 classes grew in instances and bytes from each histogram to "
                 + "the next (top 2 by bytes)"), table);
@@ -126,17 +126,17 @@ class HistogramTest {
     /// Arrays that grew in bytes at every step while their number fell are listed in a table of their own: `int[]`
     /// and `long[]` between the two histograms an hour apart (the real rows), next to `byte[]`, which grew in both.
     @Test
-    void bytesThatGrewWhileInstancesDidNotHaveTheirOwnTable() {
+    void bytesThatGrewWhileInstancesDidNotHaveTheirOwnTable() throws IOException {
         final Histogram start = Histogram.parse("""
                    1:         78239       23957512  [B (java.base@25)
                    6:          5639        1010928  [I (java.base@25)
                   17:           889         181752  [J (java.base@25)
-                """);
+                """, "inline");
         final Histogram end = Histogram.parse("""
                    1:         91408       31721472  [B (java.base@25)
                    5:          5180        1810640  [I (java.base@25)
                   18:           686         222992  [J (java.base@25)
-                """);
+                """, "inline");
         assertEquals(List.of("[B"), Histogram.growers(List.of(start, end)).stream().map(Histogram.Grower::name)
                 .toList());
         assertEquals(List.of("[I", "[J"), Histogram.bytesOnly(List.of(start, end)).stream()
@@ -164,6 +164,12 @@ class HistogramTest {
         final LiveTest.Run none = LiveTest.run("growth", a.toString(), empty.toString());
         assertEquals(1, none.status());
         assertTrue(none.err().contains("holds no class histogram rows"), none.err());
+        final Path huge = Files.writeString(dir.resolve("huge.txt"), "   2:  99999999999999999999  10  Foo\n",
+                StandardCharsets.UTF_8);
+        final LiveTest.Run bad = LiveTest.run("growth", a.toString(), huge.toString());
+        assertEquals(1, bad.status());
+        assertTrue(bad.err().contains(huge + " line 1: a count does not fit 64 bits"), bad.err());
+        assertFalse(bad.err().contains("the JVM"), bad.err());
         assertTrue(LiveTest.run("growth", "--help").out().contains("growth H1 H2"));
     }
 }

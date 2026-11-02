@@ -24,6 +24,7 @@ import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Stall.Evidence;
+import dev.jfrq.core.stalls.Stall.LockHolder;
 import dev.jfrq.core.stalls.Stall.Verdict;
 import dev.jfrq.core.stalls.StallReport.Sight;
 import dev.jfrq.core.stalls.StallReport.ThreadSummary;
@@ -588,11 +589,7 @@ public final class StallAnalysis {
 
     /** A park on an object, or a monitor enter whose holder is unknown: a wait on a lock nobody is named for. */
     static boolean hasNoRecordedHolder(final Stall s) {
-        return switch (s.verdict()) {
-            case PARKED -> !s.detail().contains(ParkShapes.NO_BLOCKER);
-            case BLOCKED_MONITOR -> s.detail().contains(HELD_BY_UNKNOWN);
-            default -> false;
-        };
+        return s.holder() == LockHolder.UNRECORDED;
     }
 
     /**
@@ -662,10 +659,8 @@ public final class StallAnalysis {
                 }
             }
             if (count > 0) {
-                marked.put(s, new Stall(s.thread(), s.interval(), s.verdict(),
-                        s.detail() + "; simultaneous on " + (count + 1)
-                                + " watched threads, so more likely the sampler than this thread",
-                        s.stack(), s.evidence(), s.samples()));
+                marked.put(s, s.with(s.interval(), s.detail() + "; simultaneous on " + (count + 1)
+                        + " watched threads, so more likely the sampler than this thread"));
             }
         }
         if (marked.isEmpty()) {
@@ -938,7 +933,7 @@ public final class StallAnalysis {
                     clippedStalls++;
                 }
                 eventStalls.add(new Stall(tl.thread(), own, verdictOf(b.kind()), describe(b), b.stack(),
-                        Evidence.EVENT, 0));
+                        Evidence.EVENT, 0, LockHolder.of(b)));
                 claimedTo = own.end();
             }
         }
@@ -1069,8 +1064,7 @@ public final class StallAnalysis {
             if (end == run.interval().end()) {
                 out.add(run);
             } else if (end - run.start() >= gap) {
-                out.add(new Stall(run.thread(), new Interval(run.start(), end), run.verdict(), run.detail(),
-                        run.stack(), run.evidence(), run.samples()));
+                out.add(run.with(new Interval(run.start(), end), run.detail()));
             }
         }
         return out;
@@ -1190,7 +1184,7 @@ public final class StallAnalysis {
                     : ex.detail + ", " + Durations.format(ex.stopped) + " of a " + Durations.format(silence.duration())
                             + " silence";
             return new Stall(tl.thread(), explained, ex.verdict, detail + edgeNote(tl, explained, edge), ex.stack,
-                    Evidence.SILENCE, 0);
+                    Evidence.SILENCE, 0, ex.holder);
         }
         // Longer than the thread's routine absence: the sampler would have seen it otherwise.
         // A thread seen fewer than twice has no routine absence to be longer than, and its
@@ -1236,7 +1230,8 @@ public final class StallAnalysis {
         // idle point — so without this a worker's own waiting reappears here after
         // being kept out of the event stalls and the silences.
         return isAtRest(ex.verdict, ex.stack) ? null
-                : new Stall(tl.thread(), run, ex.verdict, ex.detail, ex.stack, Evidence.SAMPLES, samples.size());
+                : new Stall(tl.thread(), run, ex.verdict, ex.detail, ex.stack, Evidence.SAMPLES, samples.size(),
+                        ex.holder);
     }
 
     /**
@@ -1364,8 +1359,11 @@ public final class StallAnalysis {
      *                pause to the last, which is all they account for; {@code null} for blocks
      * @param stopped for an explanation by pauses, how long they stopped the JVM inside the
      *                candidate; 0 for blocks
+     * @param holder  for blocks, what the group's events say of a lock holder, combined
+     *                ({@link LockHolder#and}); {@link LockHolder#NOT_A_LOCK} for pauses
      */
-    private record Explanation(Verdict verdict, String detail, Stack stack, Interval extent, long stopped) {
+    private record Explanation(Verdict verdict, String detail, Stack stack, Interval extent, long stopped,
+                               LockHolder holder) {
     }
 
     /**
@@ -1386,6 +1384,8 @@ public final class StallAnalysis {
         long bytes;
         /** The longest block in the group: its stack stands for the group. */
         Block representative;
+        /** What the group's blocks say of a lock holder, combined. */
+        LockHolder holder;
         /** For monitors, every thread that held one of the group's locks, in first-seen order. */
         final ObjList<ThreadRef> owners = new ObjList<>();
 
@@ -1398,6 +1398,7 @@ public final class StallAnalysis {
             this.count = 0;
             this.bytes = 0;
             this.representative = null;
+            this.holder = LockHolder.NOT_A_LOCK;
             this.owners.clear();
             return this;
         }
@@ -1540,6 +1541,7 @@ public final class StallAnalysis {
                 g.overlap += overlap;
                 g.count++;
                 g.bytes += b.bytes();
+                g.holder = g.holder.and(LockHolder.of(b));
                 if (g.representative == null || b.duration() > g.representative.duration()) {
                     g.representative = b;
                 }
@@ -1562,7 +1564,7 @@ public final class StallAnalysis {
                 final long others = best.overlap < minCover ? count - best.count : 0;
                 return new Explanation(verdictOf(rep.kind()), others == 0 ? detail
                         : detail + ", with " + others + (others == 1 ? " other blocking event" : " other blocking events"),
-                        rep.stack(), null, 0);
+                        rep.stack(), null, 0, best.holder);
             }
             return null;
         }
@@ -1666,7 +1668,8 @@ public final class StallAnalysis {
             final String detail = count == 1 ? kind.label() + ": " + longest.detail()
                     : count + " × " + kind.label() + ", " + Durations.format(covered) + " stopped in total, longest "
                     + Durations.format(longest.duration()) + " (" + longest.detail() + ")";
-            return new Explanation(verdict, detail, Stack.EMPTY, new Interval(first, coveredTo), covered);
+            return new Explanation(verdict, detail, Stack.EMPTY, new Interval(first, coveredTo), covered,
+                    LockHolder.NOT_A_LOCK);
         }
     }
 
@@ -1806,7 +1809,7 @@ public final class StallAnalysis {
         return sb.toString();
     }
 
-    /** How a monitor stall's detail names its holder, and says the recording names none. */
+    /** How a monitor stall's detail names its holder, and says the recording names none: rendering only. */
     private static final String HELD_BY = " held by ";
     private static final String HELD_BY_UNKNOWN = HELD_BY + "unknown";
 

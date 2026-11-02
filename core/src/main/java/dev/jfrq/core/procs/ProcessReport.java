@@ -3,7 +3,10 @@
 
 package dev.jfrq.core.procs;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
 import java.util.List;
+import java.util.Locale;
 
 import dev.jfrq.core.jfr.RecordingInfo;
 
@@ -30,6 +33,17 @@ public record ProcessReport(RecordingInfo info, long starts, String siteKey, Lis
     public double perMinute(final long count) {
         final long spanNanos = info.span().duration();
         return spanNanos == 0 ? 0 : count * 60_000_000_000.0 / spanNanos;
+    }
+
+    /**
+     * {@link #perMinute} as text and HTML print it: one decimal from 1 up ({@code 12.4}), two
+     * significant digits under 1 ({@code 0.31}, {@code 0.012}), so a command started a few times
+     * in a long recording does not read {@code 0.0}.
+     */
+    public String perMinuteText(final long count) {
+        final double v = perMinute(count);
+        return v == 0 || v >= 1 ? String.format(Locale.ROOT, "%.1f", v)
+                : new BigDecimal(v).round(new MathContext(2)).toPlainString();
     }
 
     /**

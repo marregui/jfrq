@@ -301,4 +301,18 @@ public final class Jvm implements Closeable {
     public void close() throws IOException {
         connector.close();
     }
+
+    /**
+     * {@link #close()} with a deadline: closing an RMI connector is a remote call, which waits
+     * for as long as a frozen JVM does not answer. Past {@code timeout} the close is left to a
+     * virtual thread, which does not hold this process's exit.
+     *
+     * @throws IOException what the close threw, or that the JVM did not answer it in time
+     */
+    void close(final Duration timeout) throws IOException {
+        within(() -> {
+            connector.close();
+            return null;
+        }, timeout, "the connection's close");
+    }
 }

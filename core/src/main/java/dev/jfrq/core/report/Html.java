@@ -463,13 +463,13 @@ public final class Html {
                     + "made with either started no process in its span.");
             return p.finish();
         }
-        p.kv("Processes", r.starts() + " started, " + String.format(Locale.ROOT, "%.1f", r.perMinute(r.starts()))
+        p.kv("Processes", r.starts() + " started, " + r.perMinuteText(r.starts())
                 + " per minute, " + r.commands().size() + (r.commands().size() == 1 ? " command" : " commands"));
         p.kv("Sites", "a command is the basename of the command line's first word; a site is " + r.siteKey());
         p.h2("By command");
         p.tableStart("Starts", "Per min", "Command", "Threads", "Sites", "Example");
         for (final ProcessReport.Command c : Json.top(r.commands(), top)) {
-            p.row(c.starts(), String.format(Locale.ROOT, "%.1f", r.perMinute(c.starts())), c.command(),
+            p.row(c.starts(), r.perMinuteText(c.starts()), c.command(),
                     ProcessReport.listed(c.threads()), ProcessReport.listed(c.sites()), c.example());
         }
         if (r.commands().size() > top) {
@@ -479,7 +479,7 @@ public final class Html {
         p.h2("By thread family");
         p.tableStart("Starts", "Per min", "Family", "Threads", "Commands");
         for (final ProcessReport.Family f : Json.top(r.families(), top)) {
-            p.row(f.starts(), String.format(Locale.ROOT, "%.1f", r.perMinute(f.starts())), f.name(), f.threads(),
+            p.row(f.starts(), r.perMinuteText(f.starts()), f.name(), f.threads(),
                     ProcessReport.listed(f.commands()));
         }
         if (r.families().size() > top) {
@@ -527,8 +527,14 @@ public final class Html {
                 first = false;
             }
             if (m.sites().size() > top) {
-                p.row("", "", "", "", "", "(" + (m.sites().size() - top) + " more sites, --top to list them)", "", "",
-                        "");
+                long restNanos = m.totalNanos();
+                long restWaits = m.waits();
+                for (final WaitReport.Site site : Json.top(m.sites(), top)) {
+                    restNanos -= site.totalNanos();
+                    restWaits -= site.waits();
+                }
+                p.row("", "", "", "", "", "(" + (m.sites().size() - top) + " more sites, --top to list them)",
+                        Durations.format(restNanos), restWaits, "");
             }
         }
         if (r.classes().size() > top) {

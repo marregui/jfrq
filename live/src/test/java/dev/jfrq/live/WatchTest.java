@@ -177,7 +177,7 @@ class WatchTest {
         assertTrue(Histogram.read(file).instances("java.lang.String") > 0);
         final LiveTest.Run printed = LiveTest.run(PID, "histo");
         assertEquals(0, printed.status(), printed.err());
-        assertTrue(Histogram.parse(printed.out()).instances("java.lang.String") > 0);
+        assertTrue(Histogram.parse(printed.out(), "the printed histogram").instances("java.lang.String") > 0);
     }
 
     /// Everything wrong with a watch's command line is a usage error before the JVM is attached to.

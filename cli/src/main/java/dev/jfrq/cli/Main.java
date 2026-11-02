@@ -70,7 +70,7 @@ import dev.jfrq.core.waits.WaitReport;
  */
 public final class Main {
 
-    public static final String VERSION = "0.2.0-SNAPSHOT";
+    public static final String VERSION = "0.2.0";
 
     static final String USAGE = """
             jfrq %s - ask a JFR recording one question
@@ -448,25 +448,8 @@ public final class Main {
         if (bucket == Durations.INFINITE) {
             throw new Args.UsageException("--bucket must be finite");
         }
-        return new Hot(recording, args.top(), sitesShown(args), siteKey(args), bucket,
+        return new Hot(recording, args.top(), args.positive("sites", HotReport.SITES_SHOWN), siteKey(args), bucket,
                 htmlTarget(args, recording, null));
-    }
-
-    /** {@code hot --sites N}: a positive count, {@link HotReport#SITES_SHOWN} without it. */
-    private static int sitesShown(final Args args) {
-        final Optional<String> v = args.option("sites");
-        if (v.isEmpty()) {
-            return HotReport.SITES_SHOWN;
-        }
-        try {
-            final int n = Integer.parseInt(v.orElseThrow());
-            if (n <= 0) {
-                throw new Args.UsageException("--sites must be positive");
-            }
-            return n;
-        } catch (final NumberFormatException e) {
-            throw new Args.UsageException("--sites is not a number: " + v.orElseThrow());
-        }
     }
 
     private static Procs procs(final Args args, final Path recording) {

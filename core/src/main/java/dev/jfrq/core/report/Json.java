@@ -398,6 +398,7 @@ public final class Json {
         w.name("evidence").value(s.evidence().name());
         w.name("detail").value(s.detail());
         w.name("samples").value(s.samples());
+        w.name("holder").value(s.holder().name());
         stack(w, s.stack());
         w.name("meanwhile").array();
         for (final Meanwhile m : s.meanwhile()) {

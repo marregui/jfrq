@@ -54,7 +54,7 @@ public interface SiteKey {
 
     /** What the rows are, in the words the report prints above them. */
     default String description() {
-        return "the innermost frame outside the JDK";
+        return "the innermost frame outside the JDK, or the top frame of a stack that is all JDK";
     }
 
     /**
@@ -109,7 +109,7 @@ public interface SiteKey {
             @Override
             public String description() {
                 return "the innermost frame in " + String.join(" or ", prefixes)
-                        + ", or outside the JDK where there is none";
+                        + ", or outside the JDK where there is none, or the top frame of a stack that is all JDK";
             }
         };
     }
