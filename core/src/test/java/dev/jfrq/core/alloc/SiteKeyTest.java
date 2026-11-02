@@ -38,6 +38,13 @@ class SiteKeyTest {
         assertEquals("io.nettyx.Handler.m", SiteKey.inPackages(List.of("io.")).of(stack));
         assertEquals("com.app.Main.m", SiteKey.inPackages(List.of("com.app.Main")).of(stack));
         assertEquals("com.app.Main.m", SiteKey.inPackages(List.of("io.netty", "com.app")).of(stack));
+        // The index of the named frame, which hot reads the frames below: the same frame as the name.
+        assertEquals(2, SiteKey.inPackages(List.of("io.nettyx")).frameIndex(stack));
+        assertEquals(1, SiteKey.inPackages(List.of("io.netty")).frameIndex(stack));
+        assertEquals(-1, SiteKey.culpritMethod().frameIndex(Stack.EMPTY));
+        assertEquals(SiteKey.NO_STACK, SiteKey.culpritMethod().of(Stack.EMPTY));
+        // A stack of JDK frames alone is named by its top frame, as Stack.culpritOrNull is.
+        assertEquals(0, SiteKey.culpritMethod().frameIndex(stack("java.lang.String", "java.lang.Thread")));
     }
 
     @Test

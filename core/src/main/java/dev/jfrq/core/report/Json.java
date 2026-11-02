@@ -16,6 +16,7 @@ import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
 import dev.jfrq.core.health.ThreadCpu;
+import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
@@ -535,6 +536,70 @@ public final class Json {
 
     // ---------------------------------------------------------------------------- alloc
 
+    /**
+     * {@code jfrq hot}: the families, each with its sites and the frames below them, the leaf
+     * methods and each listed family's timeline, every list cut to {@code top}.
+     */
+    public static String hot(final HotReport r, final int top, final String version) {
+        final Writer w = envelope("hot", version, r.info());
+        w.name("samples").value(r.samples());
+        w.name("siteKey").value(r.siteKey());
+        w.name("bucketNanos").value(r.bucketNanos());
+        w.name("buckets").array();
+        for (int b = 0; b < r.buckets(); b++) {
+            w.value(r.bucketStart(b).toString());
+        }
+        w.end();
+        w.name("bucketTotals").array();
+        for (int b = 0; b < r.buckets(); b++) {
+            w.value(r.bucketTotal(b));
+        }
+        w.end();
+        w.name("familiesFound").value(r.groups().size());
+        w.name("families").array();
+        for (final HotReport.Group g : top(r.groups(), top)) {
+            w.object();
+            w.name("family").value(g.name());
+            w.name("threads").value(g.threads());
+            w.name("samples").value(g.samples());
+            w.name("share").value(r.share(g.samples()));
+            w.name("sitesFound").value(g.sites().size());
+            w.name("sites").array();
+            for (final HotReport.Site site : top(g.sites(), top)) {
+                w.object();
+                w.name("frame").value(site.frame());
+                w.name("samples").value(site.samples());
+                w.name("belowFound").value(site.next().size());
+                w.name("below").array();
+                counts(w, top(site.next(), top));
+                w.end();
+                w.end();
+            }
+            w.end();
+            w.name("timeline").array();
+            for (final long n : g.timeline()) {
+                w.value(n);
+            }
+            w.end();
+            w.end();
+        }
+        w.end();
+        w.name("leavesFound").value(r.leaves().size());
+        w.name("leaves").array();
+        counts(w, top(r.leaves(), top));
+        w.end();
+        return w.finish();
+    }
+
+    private static void counts(final Writer w, final List<HotReport.Count> counts) {
+        for (final HotReport.Count c : counts) {
+            w.object();
+            w.name("frame").value(c.frame());
+            w.name("samples").value(c.samples());
+            w.end();
+        }
+    }
+
     public static String alloc(final AllocationReport r, final int top, final boolean sites, final SiteKey key,
                                final String version) {
         final Writer w = envelope("alloc", version, r.info());
@@ -773,7 +838,8 @@ public final class Json {
         return out;
     }
 
-    private static <T> List<T> top(final List<T> list, final long n) {
+    /** The first {@code n} of {@code list}; {@link Html} cuts its tables with it too. */
+    static <T> List<T> top(final List<T> list, final long n) {
         return list.size() > n ? list.subList(0, (int) n) : list;
     }
 

@@ -35,13 +35,19 @@ public interface SiteKey {
     String NO_STACK = "(no stack)";
 
     /** The default key, held once: a strategy object belongs to the run, not to the call site. */
-    SiteKey CULPRIT_METHOD = stack -> {
-        final Frame culprit = stack.culpritOrNull();
-        return culprit == null ? NO_STACK : method(culprit);
-    };
+    SiteKey CULPRIT_METHOD = Stack::culpritOrTopIndex;
+
+    /**
+     * Where in {@code stack} the frame this key names is, innermost first, or {@code -1} for a
+     * stack with no frames. {@code hot} reads the frames below it ({@code docs/design/hot.md}).
+     */
+    int frameIndex(Stack stack);
 
     /** The name this stack is ranked under; stacks with the same name are one row. */
-    String of(Stack stack);
+    default String of(final Stack stack) {
+        final int index = frameIndex(stack);
+        return index < 0 ? NO_STACK : method(stack.frameQuick(index));
+    }
 
     /** What the rows are, in the words the report prints above them. */
     default String description() {
@@ -66,16 +72,16 @@ public interface SiteKey {
         return new SiteKey() {
 
             @Override
-            public String of(final Stack stack) {
+            public int frameIndex(final Stack stack) {
                 for (int i = 0, n = stack.depth(); i < n; i++) {
-                    final Frame frame = stack.frameQuick(i);
+                    final String type = stack.frameQuick(i).type();
                     for (final String prefix : prefixes) {
-                        if (inPackage(frame.type(), prefix)) {
-                            return method(frame);
+                        if (inPackage(type, prefix)) {
+                            return i;
                         }
                     }
                 }
-                return CULPRIT_METHOD.of(stack);
+                return CULPRIT_METHOD.frameIndex(stack);
             }
 
             @Override

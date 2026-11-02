@@ -456,6 +456,11 @@ class MainTest {
                 recording.toString()));
         assertEquals(0L, map(diff, "change").get("bytesPerSecondChange"));
 
+        final Map<String, Object> hot = JsonParser.object(json("hot", recording.toString(), "--app", "dev.jfrq"));
+        final String hotText = run("hot", recording.toString(), "--app", "dev.jfrq").out();
+        assertTrue(hotText.contains("Samples    " + hot.get("samples") + " of threads"), hotText + hot);
+        assertTrue((Long) hot.get("samples") > 0, hot.toString());
+
         final Map<String, Object> health = JsonParser.object(json("health", recording.toString()));
         final String healthText = run("health", recording.toString()).out();
         assertTrue(healthText.contains("Collections  " + map(health, "gc").get("collections") + " ("),
@@ -526,6 +531,26 @@ class MainTest {
         final Run app = run("alloc", recording.toString(), "--sites", "--app", "dev.jfrq");
         assertEquals(0, app.status(), app.err());
         assertTrue(app.out().contains("dev.jfrq."), app.out());
+    }
+
+    /// `hot` prints its three sections, names the loop's site under `--app`, and rejects a zero bucket
+    /// and a foreign option.
+    @Test
+    void hot() throws Exception {
+        final Path html = dir.resolve("hot.html");
+        final Run r = run("hot", recording.toString(), "--app", "dev.jfrq", "--bucket", "1s", "--html",
+                html.toString());
+        assertEquals(0, r.status(), r.err());
+        for (final String section : List.of("BY THREAD FAMILY", "LEAF METHODS", "TIMELINE (samples per 1.00 s, UTC)")) {
+            assertTrue(r.out().contains("\n" + section), section + " in " + r.out());
+        }
+        // The fixture's loop spins in Loop.idle: the family and its site, named under --app.
+        assertTrue(r.out().contains("loop-cli"), r.out());
+        assertTrue(r.out().contains("dev.jfrq.cli.MainTest$Loop.idle"), r.out());
+        assertTrue(Files.readString(html).contains("<title>jfrq hot"));
+        assertEquals(2, run("hot", recording.toString(), "--bucket", "0s").status());
+        assertEquals(2, run("hot", recording.toString(), "--bucket", "infinity").status());
+        assertEquals(2, run("hot", recording.toString(), "--sites").status());
     }
 
     @Test

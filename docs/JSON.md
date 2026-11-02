@@ -119,6 +119,20 @@ the text report.
 Given several recordings, the document has no `recording`; it has `reports[]` instead, one
 per recording in the order given, each a `recording` object followed by every field above.
 
+## `hot`
+
+| Field | |
+|---|---|
+| `samples` | every `jdk.ExecutionSample` read |
+| `siteKey` | how a site is chosen, in words |
+| `bucketNanos`, `buckets[]`, `bucketTotals[]` | the timeline's bucket width (a multiple of `--bucket`, wider when that would make more than 1,000), each bucket's start (UTC) and its samples across families |
+| `familiesFound`, `leavesFound` | how many rows each list had before `--top` |
+| `families[]` | `family`, `threads`, `samples`, `share`, `sitesFound`, `sites[]` (`frame`, `samples`, `belowFound`, `below[]` (`frame`, `samples`)), `timeline[]` (samples per bucket, aligned with `buckets[]`) |
+| `leaves[]` | `frame`, `samples`: the innermost frame of every sample |
+
+`below[]` names the outermost frame outside the JDK under the site, else the frame the site called, else
+`(the site itself)`. Every list is cut to `--top`.
+
 ## `alloc`
 
 | Field | |

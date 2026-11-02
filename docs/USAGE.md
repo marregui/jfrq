@@ -40,6 +40,7 @@ JVM options go in `JFRQ_OPTS` (`jfrq`) or `JFRQ_LIVE_OPTS` (`jfrq-live`):
 ```
 jfrq info   recording.jfr [--thread GLOB [--top N]] [--html out.html] [--json]
 jfrq health recording.jfr [more.jfr ...] [--top N] [--html out.html] [--json]
+jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--top N] [--html out.html] [--json]
 jfrq alloc  recording.jfr [--baseline before.jfr] [--top N] [--sites] [--app PREFIX] [--html out.html] [--json]
 jfrq locks  recording.jfr [--min 10ms] [--thread GLOB] [--lock GLOB] [--idle REGEX,...] [--by-site] [--top N] [--html out.html] [--json]
 jfrq stalls recording.jfr --thread GLOB [--gap 50ms] [--idle REGEX,...] [--app PREFIX] [--top N] [--html out.html] [--json]
@@ -118,7 +119,30 @@ any `Thread-N`.
 100 ms and in a second and when, and the code that started them (the innermost frame
 outside the JDK in the starting thread's stack, with the threads that ran it, in name order).
 
-## 7. `alloc`
+## 7. `hot`
+
+`hot` answers where the CPU went, from `jdk.ExecutionSample`: a sample is a thread found
+running Java code, so a family's share of the samples is its share of the Java threads' CPU
+as the sampler saw it. Threads in native code (`jdk.NativeMethodSample`) are not counted.
+
+- **By thread family**: the threads folded by the numbers a pool varies per worker
+  (`AWT-EventQueue-0` and `-1` are `AWT-EventQueue-N`), each with its samples, share and
+  sites. A site is the innermost frame outside the JDK, or with `--app` the innermost frame
+  under one of its prefixes (the same rule as `alloc --app`). Under each site, the outermost
+  frame outside the JDK below it, else the frame the site called: a container whose `paint` only paints its
+  children is split by the library or component code it dispatched to, not by the JDK's
+  `JComponent.paint` that every one of its samples passes through. `(the site itself)` is
+  the samples whose site is their leaf.
+- **Leaf methods**: the innermost frame of every sample, across families.
+- **Timeline**: samples per `--bucket` (default `5m`), buckets aligned to the clock in UTC,
+  the total and the five busiest families. A bucket that would make more than 1,000 over
+  the samples' span is widened to the smallest multiple of it that fits, and the heading says
+  the width used.
+
+Four sites per family and three frames below each are listed; the rest are summed on one
+line. `--top` bounds the families and the leaf methods (in JSON, every list).
+
+## 8. `alloc`
 
 `alloc --sites` ranks one row per allocating method — the innermost frame outside the JDK
 — so every path that reaches it is summed instead of ranked separately; the row says how
@@ -134,7 +158,7 @@ lambdas (`com.example.Handler$Inner`) but not `com.example.HandlerFactory`.
 `--baseline before.jfr` compares two recordings: what changed between the recording
 before the fix and the one after.
 
-## 8. `locks` and `stalls`
+## 9. `locks` and `stalls`
 
 `locks --by-site` does for lock instances what `alloc --sites` does for allocations:
 fifteen queues of the same kind become one row of fifteen instances, ranked across all of
@@ -181,7 +205,7 @@ first, in one line, how short a stall no event explains can be and still go unse
 threads you asked about; then, in an `UNSEEN` section that closes the report, whether the sampler's pace or the thread's own
 absences are why, and the sampling period that would help.
 
-## 9. `health`
+## 10. `health`
 
 `health` reads what the other commands leave: the collector's own events, the JVM's
 once-a-second statistics and the throwables it created.
@@ -230,7 +254,7 @@ cluster, or a JVM's successive runs): span, findings, GC time, heap after GC flo
 resident set, live threads, threads started, the JVM's and the threads' CPU, and
 throwables per second, then each recording's findings under its name.
 
-## 10. A killed JVM
+## 11. A killed JVM
 
 A JVM that was killed leaves its repository directory of chunk files rather than a
 recording, and `jfrq` given that directory (or the `repository=` one above it) says what
@@ -239,7 +263,7 @@ writing, is unfinished and unreadable by any reader; `jfrq` then names the size 
 `out.jfr` to so it holds only the finished ones. A repository of a single chunk holds
 nothing readable.
 
-## 11. Exit status
+## 12. Exit status
 
 | Status | When |
 |---|---|

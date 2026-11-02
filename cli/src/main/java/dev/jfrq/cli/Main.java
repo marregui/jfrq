@@ -36,6 +36,8 @@ import dev.jfrq.core.alloc.AllocationReport;
 import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.health.HealthCollector;
 import dev.jfrq.core.health.HealthReport;
+import dev.jfrq.core.hot.HotCollector;
+import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionCollector;
@@ -53,6 +55,7 @@ import dev.jfrq.core.util.Glob;
  *
  * <pre>
  *   jfrq info   recording.jfr [--thread GLOB [--top N]] [--html out.html] [--json]
+ *   jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--top N] [--html out.html] [--json]
  *   jfrq alloc  recording.jfr [--baseline before.jfr] [--top N] [--sites] [--app PREFIX] [--html out.html] [--json]
  *   jfrq locks  recording.jfr [--min 10ms] [--thread GLOB] [--lock GLOB] [--idle REGEX,...] [--by-site] [--top N] [--html out.html] [--json]
  *   jfrq stalls recording.jfr --thread GLOB [--gap 50ms] [--idle REGEX,...] [--app PREFIX] [--top N] [--html out.html] [--json]
@@ -71,6 +74,8 @@ public final class Main {
             commands:
               info    what is in the recording: span, threads (with their CPU, and which native
                       code attached), event counts, active thresholds
+              hot     where the CPU went: Java samples by thread family, site and the code below
+                      it, leaf methods, and a timeline
               alloc   allocation pressure by thread, class and site; --baseline diffs two recordings
               locks   lock contention: which locks, who waited, who held them, convoys
               stalls  when a thread did not return to its idle point, and why
@@ -89,6 +94,13 @@ public final class Main {
             info:
               --thread GLOB  also say how the matching threads were started: how many, the most
                              in 100 ms and in 1 s, and the code that started them
+
+            hot:
+              --app PREFIX   name each family's sites by the innermost frame under one of these
+                             comma-separated prefixes, as alloc's --app does, instead of the
+                             innermost frame outside the JDK; under each site, the outermost
+                             frame outside the JDK below it says what a container dispatched to
+              --bucket D     the timeline's resolution (default 5m)
 
             alloc:
               --baseline F   compare against recording F (rates, so lengths may differ)
@@ -147,6 +159,7 @@ public final class Main {
         final Set<String> flags = new HashSet<>(COMMON_FLAGS);
         switch (command) {
             case "info" -> valued.add("thread");
+            case "hot" -> valued.addAll(Set.of("app", "bucket"));
             case "alloc" -> {
                 valued.addAll(Set.of("baseline", "app"));
                 flags.add("sites");
@@ -328,6 +341,7 @@ public final class Main {
             phase(null);
             return switch (question) {
                 case final Info q -> info(q);
+                case final Hot q -> hot(q);
                 case final Alloc q -> alloc(q);
                 case final Locks q -> locks(q);
                 case final Stalls q -> stalls(q);
@@ -352,12 +366,15 @@ public final class Main {
     }
 
     /** A question with every option resolved into a final value, before any file is read. */
-    private sealed interface Question permits Info, Alloc, Locks, Stalls, Health {
+    private sealed interface Question permits Info, Hot, Alloc, Locks, Stalls, Health {
         Path recording();
     }
 
     /** {@code threads} is {@code null} without {@code --thread}. */
     private record Info(Path recording, int top, Glob threads, Path html) implements Question {
+    }
+
+    private record Hot(Path recording, int top, SiteKey key, long bucket, Path html) implements Question {
     }
 
     private record Alloc(Path recording, Path baseline, int top, boolean sites, SiteKey key, Path html)
@@ -379,12 +396,21 @@ public final class Main {
     private static Question resolve(final String command, final Args args, final Path recording) throws IOException {
         return switch (command) {
             case "info" -> info(args, recording);
+            case "hot" -> hot(args, recording);
             case "alloc" -> alloc(args, recording);
             case "locks" -> locks(args, recording);
             case "stalls" -> stalls(args, recording);
             case "health" -> health(args, recording);
             default -> throw new IllegalStateException(command);
         };
+    }
+
+    private static Hot hot(final Args args, final Path recording) {
+        final long bucket = args.durationOption("bucket", "5m", false);
+        if (bucket == Durations.INFINITE) {
+            throw new Args.UsageException("--bucket must be finite");
+        }
+        return new Hot(recording, args.top(), siteKey(args), bucket, htmlTarget(args, recording, null));
     }
 
     private static Alloc alloc(final Args args, final Path recording) throws IOException {
@@ -479,6 +505,17 @@ public final class Main {
                 : RecordingSummary.starts(result, q.threads(), q.top());
         out.print(json ? Json.info(info, result, starts, VERSION) : Text.info(info, result, starts));
         html(q.html(), () -> Html.info(info, result, starts));
+        phase("render");
+        return 0;
+    }
+
+    private int hot(final Hot q) throws IOException {
+        final HotCollector collector = new HotCollector(q.key(), q.bucket());
+        JfrReader.read(q.recording(), collector);
+        phase("read");
+        final HotReport report = collector.report();
+        out.print(json ? Json.hot(report, q.top(), VERSION) : Text.hot(report, q.top()));
+        html(q.html(), () -> Html.hot(report, q.top()));
         phase("render");
         return 0;
     }

@@ -98,6 +98,15 @@ public final class Stack {
         return index < 0 ? topOrNull() : frames[index];
     }
 
+    /**
+     * Where {@link #culpritOrNull()} is, innermost first: the innermost non-JDK frame, else the
+     * top frame, else {@code -1} for an empty stack.
+     */
+    public int culpritOrTopIndex() {
+        final int index = culpritIndex();
+        return index < 0 && frames.length > 0 ? 0 : index;
+    }
+
     /** Index of the innermost non-JDK frame, or -1. */
     private int culpritIndex() {
         for (int i = 0; i < frames.length; i++) {
