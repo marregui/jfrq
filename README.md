@@ -46,6 +46,8 @@ JDK Mission Control shows the data; `jfr view` prints aggregate tables. Neither 
 | What did the JVM report about itself that points at trouble: failed evacuations, full GCs, heap floors that climb, throwables by site? | `jfrq health` |
 | What is in the file: span, threads and their CPU, event counts, and the thresholds that limit what it can show? | `jfrq info` |
 
+![Each command, the question it answers and the JFR events it reads; jfrq-live asks the same questions of a running JVM, once or for hours with watch](docs/images/questions.svg)
+
 - **One pass over the file.** A 40 MB recording is answered in about 0.25 s.
 - **No dependencies** beyond the JDK.
 - **Text, HTML or JSON.** Text for a terminal or a ticket, `--html` for a self-contained
@@ -68,12 +70,12 @@ Install (JDK 25 to run): download `jfrq-<version>.zip` from the
 `bin/` on the `PATH`. It holds both commands, `jfrq` and `jfrq-live`:
 
 ```
-unzip jfrq-0.1.0.zip
-export PATH="$PWD/jfrq-0.1.0/bin:$PATH"
+unzip jfrq-0.2.0.zip
+export PATH="$PWD/jfrq-0.2.0/bin:$PATH"
 ```
 
 The release's `SHA256SUMS` lists each zip's checksum, and
-`gh attestation verify jfrq-0.1.0.zip --repo marregui/jfrq` checks that the zip was built
+`gh attestation verify jfrq-0.2.0.zip --repo marregui/jfrq` checks that the zip was built
 by this repository's release workflow.
 
 Or build it (JDK 25):
@@ -109,6 +111,7 @@ asks the question of that, and a `delta` holds only what happened since the last
 ```
 jfrq-live 4242 start --max-age 10m
 jfrq-live 4242 delta -- stalls --thread 'event-loop-*'
+jfrq-live 4242 watch --every 30m --for 2h --histo --ask health   # a window every 30 minutes, then a summary
 ```
 
 ## Documentation
@@ -126,7 +129,7 @@ The index is [docs/README.md](docs/README.md).
 
 ## Status
 
-The latest release is 0.1.0. The command-line interface and the report layouts may change. The verdicts and
+The latest release is 0.2.0. The command-line interface and the report layouts may change. The verdicts and
 the numbers behind them are tested against synthetic timelines and against real
 recordings made in the test suite.
 

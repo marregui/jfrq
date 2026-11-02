@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="560" viewBox="0 0 1040 560" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1040" height="560" fill="#FBF8F1"/>
+  <text x="40" y="52" font-size="24" fill="#1F1D1A">jfrq-live watch</text>
+  <text x="40" y="78" font-size="14" fill="#5C574E">One process, one JMX connection, for as long as --for says; it ends by itself and leaves a folder.</text>
+
+  <!-- time axis -->
+  <line x1="60" y1="170" x2="980" y2="170" stroke="#1F1D1A" stroke-width="1.2"/>
+  <g fill="#8A6A1F">
+    <circle cx="80" cy="170" r="5"/>
+    <circle cx="380" cy="170" r="5"/>
+    <circle cx="680" cy="170" r="5"/>
+    <circle cx="960" cy="170" r="5"/>
+  </g>
+  <g font-size="12" fill="#5C574E" text-anchor="middle">
+    <text x="80" y="200">start</text>
+    <text x="380" y="200">+ every</text>
+    <text x="680" y="200">+ every</text>
+    <text x="960" y="200">+ for: end</text>
+  </g>
+  <!-- sample ticks -->
+  <g stroke="#C9A74A" stroke-width="1">
+    <line x1="140" y1="160" x2="140" y2="170"/><line x1="200" y1="160" x2="200" y2="170"/>
+    <line x1="260" y1="160" x2="260" y2="170"/><line x1="320" y1="160" x2="320" y2="170"/>
+    <line x1="440" y1="160" x2="440" y2="170"/><line x1="500" y1="160" x2="500" y2="170"/>
+    <line x1="560" y1="160" x2="560" y2="170"/><line x1="620" y1="160" x2="620" y2="170"/>
+    <line x1="740" y1="160" x2="740" y2="170"/><line x1="800" y1="160" x2="800" y2="170"/>
+    <line x1="860" y1="160" x2="860" y2="170"/><line x1="920" y1="160" x2="920" y2="170"/>
+  </g>
+  <text x="230" y="150" font-size="12" fill="#8A6A1F" text-anchor="middle" letter-spacing="1">SAMPLE EVERY --sample</text>
+  <g font-size="12" fill="#5C574E" text-anchor="middle">
+    <text x="230" y="124">window 1</text><text x="530" y="124">window 2</text><text x="820" y="124">window 3</text>
+  </g>
+  <g stroke="#E6DCC4" stroke-width="1">
+    <line x1="84" y1="114" x2="376" y2="114"/><line x1="384" y1="114" x2="676" y2="114"/><line x1="684" y1="114" x2="956" y2="114"/>
+  </g>
+
+  <!-- three columns -->
+  <g font-size="12" fill="#8A6A1F" letter-spacing="2">
+    <text x="40" y="256">AT EACH WINDOW'S END</text>
+    <text x="400" y="256">BETWEEN WINDOWS</text>
+    <text x="720" y="256">AT THE END</text>
+  </g>
+  <line x1="40" y1="266" x2="1000" y2="266" stroke="#C9A74A" stroke-width="1"/>
+  <g font-size="14" fill="#1F1D1A">
+    <text x="40" y="296">a delta dump of the window</text>
+    <text x="40" y="320">each --ask question asked of it</text>
+    <text x="40" y="344">with --histo: a class histogram,</text>
+    <text x="40" y="364">after the full GC it forces</text>
+
+    <text x="400" y="296">CPU, heap, threads, open files and</text>
+    <text x="400" y="316">committed memory, from the JVM's</text>
+    <text x="400" y="336">own MXBeans; no ps, no lsof</text>
+
+    <text x="720" y="296">a summary table per window</text>
+    <text x="720" y="320">the classes that grew in every</text>
+    <text x="720" y="340">histogram, with their counts</text>
+    <text x="720" y="364">also on JVM exit and on Ctrl-C</text>
+  </g>
+  <g font-size="13" fill="#8A6A1F" font-family="Menlo, monospace">
+    <text x="40" y="402">w01-2304.jfr</text>
+    <text x="40" y="422">w01-2304.hot.txt …</text>
+    <text x="40" y="442">w01-2304.histo.txt</text>
+    <text x="400" y="402">samples.tsv</text>
+    <text x="720" y="402">summary.txt</text>
+  </g>
+
+  <rect x="40" y="474" width="960" height="52" rx="6" fill="none" stroke="#C9A74A" stroke-width="1.2"/>
+  <text x="60" y="505" font-size="14" fill="#1F1D1A">Measured on comando, 6 minutes, 3 windows: 0.63 % of one core; 100–363 ms per window; each forced GC 15–26 ms.</text>
+  <text x="1000" y="548" font-size="11" fill="#9A9388" text-anchor="end">jfrq · docs/images/watch.svg</text>
+</svg>
