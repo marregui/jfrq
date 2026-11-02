@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import jdk.management.jfr.FlightRecorderMXBean;
 import jdk.management.jfr.RecordingInfo;
 
@@ -87,12 +88,23 @@ public final class Live {
               delta   dump what happened since the cursor; the cursor moves to the dump's end
               again   dump the previous window once more; the cursor stays
               stop    stop and close the recording
+              watch   follow the JVM for --for: a delta window every --every with each --ask question
+                      run on it, a sample of its MBeans every --sample into samples.tsv, a class
+                      histogram per window with --histo, and a summary table at the end
+              histo   the JVM's class histogram, as jcmd GC.class_histogram prints it (a full GC first)
+
+            jfrq-live growth H1 H2 [H3 ...] [--top N]
+                      the classes whose instances and bytes grew from each histogram to the next,
+                      then those whose bytes grew at every step while their instances did not
 
             options:
               --recording ID|NAME  which recording, when the JVM runs more than one; a name
                                    two recordings share is an error: use the id
               --out FILE           where the dump goes, replacing FILE (default
-                                   <pid>-<command>-<HHmmss.SSS>Z.jfr here, UTC, never replaced)
+                                   <pid>-<command>-<HHmmss.SSS>Z.jfr here, UTC, never replaced);
+                                   watch: a new or empty directory (default
+                                   watch-<pid>-<yyyyMMdd-HHmm> here, UTC); histo: the file
+                                   (default standard output)
               --state DIR          where cursors are kept (default ~/.jfrq/live)
               --max-age D          keep this much recent data: 10m, 1h, in whole seconds (a
                                    fraction is rounded up); 0 or infinity removes the bound
@@ -102,6 +114,13 @@ public final class Live {
               --set EVENT#SETTING=VALUE[,...]  settings on top of those, as stalls advises them:
                                    --set jdk.ExecutionSample#period=1ms (start)
               --name NAME          the recording's name, not one the JVM has (start; default jfrq-live)
+              --every D            a window this often (watch)
+              --for D              how long to watch; it ends by itself (watch)
+              --sample D           a sample this often (watch; default 60s)
+              --ask 'QUESTION'     a jfrq question run on each window, its answer in
+                                   wNN-HHmm.<command>.txt; repeatable (watch)
+              --histo              a class histogram at the start and after each window; each
+                                   one is a full GC in the JVM (watch)
               --version, --help
 
             after --: a jfrq command and its options, run on the dump; the file is inserted for you,
@@ -118,9 +137,11 @@ public final class Live {
      * Every time jfrq-live prints is UTC and says so, as jfrq's own header does: a dump is read
      * on other machines and next to other tools, and a clock time without a zone is a guess.
      */
-    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'",
+    static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'",
             Locale.ROOT).withZone(ZoneOffset.UTC);
     private static final String DEFAULT_NAME = "jfrq-live";
+    private static final DateTimeFormatter DIR_STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.ROOT)
+            .withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter FILE_STAMP = DateTimeFormatter.ofPattern("HHmmss.SSS'Z'", Locale.ROOT)
             .withZone(ZoneOffset.UTC);
     private static final Set<String> FLAGS = Set.of("help", "version");
@@ -152,7 +173,7 @@ public final class Live {
      * Writes one line ending in {@code '\n'}, never the platform separator, so a dump reads the
      * same on every machine and {@code jfrq}'s own output below it is terminated identically.
      */
-    private static void line(final PrintStream stream, final String text) {
+    static void line(final PrintStream stream, final String text) {
         stream.print(text + '\n');
     }
 
@@ -183,6 +204,9 @@ public final class Live {
                 line(out, "jfrq-live " + Main.VERSION);
                 return 0;
             }
+            if (argv[0].equals("growth")) {
+                return growth(Arrays.copyOfRange(argv, 1, argv.length));
+            }
             final String pid = pid(argv[0]);
             if (argv.length == 1 || argv[1].equals("--")) {
                 throw new Args.UsageException("missing command after the pid");
@@ -194,9 +218,13 @@ public final class Live {
                     separator = i;
                 }
             }
-            final String[] rest = Arrays.copyOfRange(argv, 2, separator < 0 ? argv.length : separator);
+            final List<String[]> asks = new ArrayList<>();
+            final String[] given = Arrays.copyOfRange(argv, 2, separator < 0 ? argv.length : separator);
+            // --ask is the one option given more than once, so it is taken out before Args sees the rest.
+            final String[] rest = command.equals("watch") ? asks(given, asks) : given;
             final String[] question = separator < 0 ? new String[0] : Arrays.copyOfRange(argv, separator + 1, argv.length);
-            final Args args = Args.parse(rest, valued(command), FLAGS);
+            final Args args = Args.parse(rest, valued(command),
+                    command.equals("watch") ? union(FLAGS, "histo") : FLAGS);
             if (args.flag("help")) {
                 out.print(USAGE);
                 return 0;
@@ -214,6 +242,9 @@ public final class Live {
             }
             if (separator >= 0 && question.length == 0) {
                 throw new Args.UsageException("nothing after --: name the jfrq command to run on the dump");
+            }
+            if (command.equals("watch")) {
+                return new Watch(plan(pid, args, asks), out, err).run();
             }
             // Everything that can be checked without the JVM is checked before attaching: a typo
             // costs no attach, no dump and no cursor move.
@@ -236,6 +267,7 @@ public final class Live {
                     case "start" -> start(jvm, args, limits, sets, notes);
                     case "bound" -> bound(jvm, args, limits, notes);
                     case "stop" -> stop(jvm, args);
+                    case "histo" -> histo(jvm, args);
                     default -> dump(jvm, command, args, question, file);
                 };
             } catch (final IOException | RuntimeException | Error e) {
@@ -325,8 +357,150 @@ public final class Live {
             case "bound" -> union(common, "max-age", "max-size");
             case "start" -> union(common, "max-age", "max-size", "settings", "name", "set");
             case "full", "delta", "again" -> union(common, "out");
+            case "histo" -> Set.of("out");
+            case "watch" -> union(common, "out", "every", "for", "sample");
             default -> throw new Args.UsageException("unknown command '" + command + "'");
         };
+    }
+
+    /**
+     * Moves every {@code --ask Q} or {@code --ask=Q} of {@code given} into {@code asks}, split
+     * into words; returns the rest.
+     */
+    static String[] asks(final String[] given, final List<String[]> asks) {
+        final List<String> rest = new ArrayList<>();
+        for (int i = 0; i < given.length; i++) {
+            final String text;
+            if (given[i].equals("--ask")) {
+                if (i + 1 >= given.length) {
+                    throw new Args.UsageException("--ask needs a value");
+                }
+                text = given[++i];
+            } else if (given[i].startsWith("--ask=")) {
+                text = given[i].substring("--ask=".length());
+            } else {
+                rest.add(given[i]);
+                continue;
+            }
+            final List<String> words = words(text);
+            if (words.isEmpty()) {
+                throw new Args.UsageException("--ask needs a jfrq question, such as 'health'");
+            }
+            asks.add(words.toArray(String[]::new));
+        }
+        return rest.toArray(String[]::new);
+    }
+
+    /**
+     * A question as the shell would split it: words between spaces, with {@code '...'} and
+     * {@code "..."} keeping spaces and the other quote inside one word; no escapes.
+     */
+    static List<String> words(final String text) {
+        final List<String> words = new ArrayList<>();
+        final StringBuilder word = new StringBuilder();
+        boolean inWord = false;
+        char quote = 0;
+        for (int i = 0, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                } else {
+                    word.append(c);
+                }
+            } else if (c == '\'' || c == '"') {
+                quote = c;
+                inWord = true;
+            } else if (Character.isWhitespace(c)) {
+                if (inWord) {
+                    words.add(word.toString());
+                    word.setLength(0);
+                    inWord = false;
+                }
+            } else {
+                word.append(c);
+                inWord = true;
+            }
+        }
+        if (quote != 0) {
+            throw new Args.UsageException("--ask " + text + ": a quote is not closed");
+        }
+        if (inWord) {
+            words.add(word.toString());
+        }
+        return words;
+    }
+
+    /**
+     * The watch's plan, checked before attaching: the durations, each question as {@code jfrq}
+     * will read it, and the directory, which must be new or empty so that no file of an earlier
+     * watch is taken for one of this.
+     */
+    static Watch.Plan plan(final String pid, final Args args, final List<String[]> asks) throws IOException {
+        if (args.option("every").isEmpty() || args.option("for").isEmpty()) {
+            throw new Args.UsageException("watch needs --every and --for: how often a window, and for how long");
+        }
+        final long everyNanos = args.durationOption("every", "0", false);
+        final long forNanos = args.durationOption("for", "0", false);
+        final long sampleNanos = args.durationOption("sample", "60s", false);
+        if (everyNanos == Durations.INFINITE || forNanos == Durations.INFINITE || sampleNanos == Durations.INFINITE) {
+            throw new Args.UsageException("watch takes finite durations: it ends by itself");
+        }
+        final Path dir = args.option("out").map(Path::of).orElseGet(() -> Path.of("watch-" + pid + "-"
+                + DIR_STAMP.format(Instant.now())));
+        for (final String[] q : asks) {
+            Main.check(q, dir.resolve("w01.jfr"));
+        }
+        if (Files.isDirectory(dir)) {
+            try (final Stream<Path> entries = Files.list(dir)) {
+                if (entries.findAny().isPresent()) {
+                    throw new Args.UsageException("--out " + dir
+                            + " already holds files: name a new or empty directory");
+                }
+            }
+        }
+        Files.createDirectories(dir);
+        return new Watch.Plan(pid, args, everyNanos, forNanos, sampleNanos, dir, args.flag("histo"), List.copyOf(asks));
+    }
+
+    /** {@code histo}: the class histogram to {@code --out}, else to standard output. */
+    private int histo(final Jvm jvm, final Args args) throws IOException {
+        final String text = jvm.classHistogram(Watch.HISTO_TIMEOUT);
+        final Optional<String> to = args.option("out");
+        if (to.isEmpty()) {
+            out.print(text);
+            return 0;
+        }
+        final Path file = Path.of(to.orElseThrow());
+        Files.writeString(file, text, StandardCharsets.UTF_8);
+        final Histogram h = Histogram.parse(text);
+        long instances = 0;
+        long bytes = 0;
+        for (final long[] counts : h.classes().values()) {
+            instances += counts[0];
+            bytes += counts[1];
+        }
+        line(out, String.format(Locale.ROOT, "Histogram  %s  %,d classes, %,d instances, %s, counted after a full GC",
+                file, h.classes().size(), instances, Bytes.format(bytes)));
+        return 0;
+    }
+
+    /** {@code jfrq-live growth H1 H2 ...}: no JVM, only the files. */
+    private int growth(final String[] argv) throws IOException {
+        final Args args = Args.parse(argv, Set.of("top"), FLAGS);
+        if (args.flag("help")) {
+            out.print(USAGE);
+            return 0;
+        }
+        if (args.positional().size() < 2) {
+            throw new Args.UsageException("growth needs two class histograms or more, oldest first");
+        }
+        final List<Histogram> histograms = new ArrayList<>();
+        for (final String f : args.positional()) {
+            histograms.add(Histogram.read(Path.of(f)));
+        }
+        out.print(Histogram.table(args.positional(), histograms, args.top()));
+        return 0;
     }
 
     private static boolean isDigits(final String s) {
@@ -559,16 +733,54 @@ public final class Live {
 
     private int dump(final Jvm jvm, final String command, final Args args, final String[] question, final Path file)
             throws IOException {
-        final FlightRecorderMXBean fr = jvm.flightRecorder();
         final RecordingInfo r = pick(jvm, args);
-        final Path dir = stateDir(args);
+        // A named --out is the caller's to replace; a default name never replaces an earlier dump.
+        final Taken taken = take(jvm, command, r, stateDir(args), file, args.option("out").isPresent(), err);
+        // A question that answers in JSON owns standard output: a program reads it whole, so
+        // what the dump itself says goes to standard error instead of ahead of the document.
+        final PrintStream to = question.length > 0 && Main.answersInJson(question) ? err : out;
+        check(taken.snapshot(), taken.chunks(), taken.window(), command, r, jvm, to);
+        line(to, cursorLine(taken.cursor()));
+        if (question.length == 0) {
+            return 0;
+        }
+        line(to, "");
+        return Main.run(questionOn(question, file), out, err);
+    }
+
+    /**
+     * {@code question} with {@code file} as its recording: {@code stalls --thread x} asks
+     * {@code stalls file --thread x}.
+     */
+    static String[] questionOn(final String[] question, final Path file) {
+        final List<String> argv = new ArrayList<>(question.length + 1);
+        argv.add(question[0]);
+        argv.add(file.toString());
+        argv.addAll(Arrays.asList(question).subList(1, question.length));
+        return argv.toArray(String[]::new);
+    }
+
+    /**
+     * A dump, the chunk headers of its file, the window it was asked for and the cursor after it.
+     */
+    record Taken(Snapshot snapshot, Chunks chunks, Window window, Cursor cursor) {
+    }
+
+    /**
+     * Takes one {@code full}, {@code delta} or {@code again} dump of recording {@code r} into
+     * {@code file} and moves the cursor kept in {@code stateDir}: what {@code jfrq-live <pid> delta}
+     * does before its question, and what each window of {@code watch} is.
+     */
+    static Taken take(final Jvm jvm, final String command, final RecordingInfo r, final Path stateDir, final Path file,
+            final boolean replace, final PrintStream err) throws IOException {
+        final FlightRecorderMXBean fr = jvm.flightRecorder();
         final Cursor cursor;
         final Window window;
         final Snapshot snapshot;
         final Chunks chunks;
         // The lock spans reading the cursor to advancing it: two deltas in a row, not two at once.
-        try (final Closeable _ = Cursor.lock(dir, jvm.pid(), err)) {
-            cursor = Cursor.load(dir, jvm.pid(), jvm.startTime());
+        try (final Closeable _ = Cursor.lock(stateDir, jvm.pid(), err)) {
+            cursor = Cursor.load(stateDir, jvm.pid(), jvm.startTime());
             window = switch (command) {
                 case "full" -> Window.EVERYTHING;
                 case "delta" -> {
@@ -585,8 +797,7 @@ public final class Live {
                     yield cursor.lastWindow();
                 }
             };
-            // A named --out is the caller's to replace; a default name never replaces an earlier dump.
-            snapshot = Snapshot.take(fr, jvm.pid(), r.getId(), window, file, args.option("out").isPresent());
+            snapshot = Snapshot.take(fr, jvm.pid(), r.getId(), window, file, replace);
             chunks = Chunks.scan(snapshot.file());
             if (!command.equals("again")) {
                 // A full dump's window starts where its file does, so an 'again' of it can tell
@@ -596,27 +807,14 @@ public final class Live {
                 cursor.advance(taken, snapshot.stop());
             }
         }
-        // A question that answers in JSON owns standard output: a program reads it whole, so
-        // what the dump itself says goes to standard error instead of ahead of the document.
-        final PrintStream to = question.length > 0 && Main.answersInJson(question) ? err : out;
-        check(snapshot, chunks, window, command, r, jvm, to);
-        line(to, cursorLine(cursor));
-        if (question.length == 0) {
-            return 0;
-        }
-        line(to, "");
-        final List<String> argv = new ArrayList<>(question.length + 1);
-        argv.add(question[0]);
-        argv.add(file.toString());
-        argv.addAll(Arrays.asList(question).subList(1, question.length));
-        return Main.run(argv.toArray(String[]::new), out, err);
+        return new Taken(snapshot, chunks, window, cursor);
     }
 
     /**
      * The span check: what the file holds against what was asked, and why they differ when
      * they do. The chunk headers say it all, so the dump is not parsed.
      */
-    private static void check(final Snapshot snapshot, final Chunks chunks, final Window window, final String command,
+    static void check(final Snapshot snapshot, final Chunks chunks, final Window window, final String command,
             final RecordingInfo r, final Jvm jvm, final PrintStream to) throws IOException {
         if (chunks.complete() == 0) {
             throw new IOException("the dump " + snapshot.file() + " holds no complete chunk");
@@ -750,7 +948,7 @@ public final class Live {
      * The recording to act on: {@code --recording} by id, or by a name only one recording
      * has, else the JVM's single running one.
      */
-    private static RecordingInfo pick(final Jvm jvm, final Args args) throws IOException {
+    static RecordingInfo pick(final Jvm jvm, final Args args) throws IOException {
         final List<RecordingInfo> all = jvm.flightRecorder().getRecordings();
         final Optional<String> wanted = args.option("recording");
         if (wanted.isPresent()) {
@@ -808,7 +1006,7 @@ public final class Live {
         throw new IOException("the JVM lost recording " + id);
     }
 
-    private static Path stateDir(final Args args) {
+    static Path stateDir(final Args args) {
         return args.option("state").map(Path::of)
                 .orElseGet(() -> Path.of(System.getProperty("user.home"), ".jfrq", "live"));
     }
@@ -840,7 +1038,7 @@ public final class Live {
         return sb.toString();
     }
 
-    private static String cursorLine(final Cursor c) {
+    static String cursorLine(final Cursor c) {
         if (c.next() == null) {
             return "Cursor     none: 'full' sets it (" + c.file() + ")";
         }

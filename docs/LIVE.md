@@ -35,6 +35,8 @@ with the dump's path inserted, so `-- stalls --thread 'x'` becomes
 | `delta` | Dumps what happened since the cursor. | moved to the dump's end |
 | `again` | Dumps the previous window once more. | unchanged |
 | `stop` | Stops and closes the recording; the JVM discards its data, unless the recording has a destination (`-XX:StartFlightRecording=filename=...`), where the JVM writes it before closing it. | |
+| `watch` | Follows the JVM for `--for`: a window every `--every`, each `--ask` question on it, samples, `--histo`, a summary (section 7). | moved with each window |
+| `histo` | The JVM's class histogram, after a full GC (section 7). | |
 
 `--recording ID\|NAME` picks the recording when the JVM runs several; with one running
 recording nothing needs saying. A name two recordings share is a usage error that lists
@@ -86,7 +88,7 @@ This is what `jcmd <pid> JFR.dump` does, driven over JMX instead of a diagnostic
    writing at that instant `T` and starts a fresh chunk at the same `T`; the sealed chunk
    goes to the clone. The newest events are therefore in a finished chunk, and the
    recording itself keeps running untouched.
-2. **Stream the clone's chunks that overlap the window** into the file, in 1 MB blocks
+2. **Stream the clone's chunks that overlap the window** into the file, in 128 KiB blocks
    over the local JMX connector. The JVM selects whole chunks: every chunk whose
    `[start, end]` touches `[begin, end]` of the window. Events are never cut.
 3. **Close the clone.** Nothing is left behind in the JVM. A dump interrupted by Ctrl-C
@@ -213,7 +215,127 @@ question after `--`. A `jfrq` command after `--` sets the status once the dump s
 A connection that does not close cleanly after a successful command is a warning on
 stderr, not a failure.
 
-## 7. On the demo
+## 7. Watching a JVM for a while: `watch`, `histo`, `growth`
+
+```
+jfrq-live 4242 watch --every 30m --for 2h --histo --ask health --ask "stalls --thread 'AWT-EventQueue-*'"
+jfrq-live 4242 histo --out before.txt                 # one class histogram
+jfrq-live growth before.txt after.txt later.txt       # the classes that grew from each to the next
+```
+
+`watch` is the loop of section 1 run by one process for a set time. It attaches once and
+keeps that JMX connection for every window, sample and histogram. It ends by itself.
+
+**Windows.** Every `--every` it takes a dump the way `delta` does (the same code: cursor,
+lock, clone, span check) into `wNN-HHmm.jfr` in the output directory: `NN` is the
+window's number, `HHmm` the UTC minute it ended. The first window is a `delta` from the
+cursor when the JVM has one; without one it is a `full` dump, everything the recording
+holds, so it can cover more than `--every`. The last window ends at `--for` and is shorter
+when `--for` is not a multiple of `--every`. The cursor moves with every window, so a
+`delta` after the watch continues where it stopped. The span check's lines are printed
+for each window as `full` and `delta` print them.
+
+**Questions.** Each `--ask` is a `jfrq` question, quoted as one argument and split as the
+shell would split it; it runs on every window, and its answer, with any complaint, goes
+to `wNN-HHmm.<command>.txt` (`.json` with `--json`). A second question with the same
+command writes `<command>-2`. Every question is checked before attaching, as after `--`.
+
+**Samples.** Every `--sample` (default `60s`) a row goes to `samples.tsv`, read from the
+JVM's own MBeans over the same connection; no `ps` or `lsof` runs:
+
+| Column | What it is |
+|---|---|
+| `time_utc` | when the row was taken |
+| `process_cpu_pct` | the JVM's CPU time over the wall time since the previous row; 100 is one core busy, as `top` counts |
+| `system_cpu_pct` | the whole machine's CPU use, 0 to 100 |
+| `heap_used_bytes`, `heap_committed_bytes` | the heap, as `MemoryMXBean` reports it |
+| `threads` | live threads |
+| `open_fds` | open file descriptors (empty where the platform has no count, Windows) |
+| `committed_virtual_bytes` | the process's committed virtual memory (on macOS mostly reservations: 508 GB measured for a 149 MB heap) |
+
+The first row has no CPU values: both are rates since the previous reading. No MBean
+reports the resident set size; `jfrq health` on a window reports it from the recording's
+`jdk.ResidentSetSize` events, and `ps -o rss= -p <pid>` reads it beside the watch.
+
+**Histograms.** With `--histo` the watch takes a class histogram at the start
+(`w00-HHmm.histo.txt`) and after each window's dump (`wNN-HHmm.histo.txt`), through the
+`DiagnosticCommand` MBean's `gcClassHistogram`, which is `jcmd <pid> GC.class_histogram`.
+Each one is a full GC in the JVM first: that is what makes a histogram count reachable
+objects only, and it is a pause the application sees. Measured on a Swing application with
+57 to 126 MB of heap in use: a `G1Full` pause of 14.9 to 26.2 ms per histogram, seven measured. The next window records
+it as a full collection with the cause `Heap Inspection Initiated GC`, and `jfrq health`
+lists it as a finding; with `--histo`, a full collection of that cause is the watch's own.
+
+**The end.** The watch exits with status 0 after `--for`, and at once when the JVM
+exits, with the time it went. Ctrl-C (or `SIGTERM`) abandons a dump in progress the way
+section 2 describes, waits at most ten seconds for the window in progress, and writes the
+summary. A connection that drops is opened again once; a second drop ends the watch with
+status 1. A window that fails on a good connection (the recording was stopped meanwhile)
+is a line in the summary, and the next window's delta covers its time. Every new call
+over the connection has a deadline: ten seconds for a sample, two minutes for a
+histogram, after which the JVM is reported as not answering.
+
+**The summary**, on standard output and in `summary.txt`: a row per window with its
+span, file, dump size, wall time for the whole window (dump, histogram, questions), wall
+time of the dump alone, and the range of the samples taken in it (process CPU, heap used,
+threads, file descriptors); then failed windows and questions that did not exit with 0;
+with `--histo`, the growth table of all the histograms.
+
+**Its own cost**, measured with `/usr/bin/time -l` on a watch of 6 minutes, a window
+every 2 minutes, a sample every 20 s, `--histo`, `--ask 'hot --app ...'` and
+`--ask health`, against a Swing application, windows of 1.95 to 8.67 MB: 2.28 s of CPU
+in 360.7 s (2.02 s user, 0.26 s system, 0.63 % of one core), 209 MB maximum resident set.
+Each window took 100 to 363 ms of wall time, of which the dump was 41 to 74 ms; the first
+window, a `full` dump of 15m07s, was the longest.
+
+### `histo` and `growth`
+
+`jfrq-live <pid> histo` prints the class histogram, or writes it to `--out FILE` with a
+line that counts it. `jfrq-live growth H1 H2 [H3 ...]` needs no JVM: it reads histograms
+in the format `jcmd` and `histo` print, oldest first, and answers with two tables, each
+ranked by byte growth from the first histogram to the last, with each class's instances
+and bytes in every file (`--top N` rows each, default 15):
+
+1. The classes whose instances and bytes both grew, strictly, from each histogram to the
+   next: more objects, taking more room.
+2. `BYTES GREW AT EVERY STEP (instances did not)`: the classes whose bytes grew at every
+   step while their instances did not, which is larger arrays or buffers rather than more
+   objects. Between two histograms of the same application an hour apart, `[I` grew by
+   781 KiB while its instances fell from 5,639 to 5,180; it is in this table, not the
+   first.
+
+A class absent from a histogram counts as 0 there; rows of one class name are added
+together. With two histograms, a step is the pair. Growth at every step, not first to
+last, keeps out a class whose count or size went up and down and ended higher. The
+histograms `watch --histo` takes are each after a full GC, so a class that grows at every
+step grows in what is reachable.
+
+### What each dump leaves in the JVM
+
+A dump reads the clone through the recorder MBean's stream API (`openStream`,
+`readStream`, `closeStream`), and `jfrq-live` closes every stream it opens, on success and
+on every failure (`LiveTest.everyStreamADumpOpensIsClosed`). Closing releases the chunks.
+The JDK keeps the closed stream object for a fixed time anyway; read in the JDK 25 source,
+`jdk.jfr.internal.management.StreamManager`:
+
+- `closeStream` closes the stream but neither removes it from the manager's map nor
+  cancels its `StreamCleanupTask`.
+- The task is scheduled when the stream opens, for 2 × `TIME_OUT` later (`TIME_OUT` is 200
+  minutes), and removes the stream when it fires: **400 minutes after each dump**.
+- The stream keeps its read buffer, one block, so each dump holds one block of the target's
+  heap for 400 minutes. I set the block to 128 KiB: on a 20–27 MB dump of a live JVM, 1 MiB
+  blocks took 0.24 s, 128 KiB 0.26 s and 64 KiB 0.31 s, so 128 KiB holds an eighth as much
+  for 20 ms more per dump.
+
+Measured on a JVM with nothing else allocating, with 1 MiB blocks: three dumps, and
+`byte[]` grew by 1.05 MB from each histogram to the next, with one more
+`StreamCleanupTask` each time. The cost is bounded by the dump rate: with 128 KiB blocks a
+watch with `--every 30m` holds about 1.8 MiB at its peak (the dumps of the last 400 minutes),
+one with `--every 1m` up to 50 MiB. In `growth`, a watch's own dumps show as `byte[]`
+growing by about 128 KiB per window, plus one
+`StreamCleanupTask`, `FinishedStream` and `RepositoryChunk` per window.
+
+## 8. On the demo
 
 ```
 netty-demo --scenario lock --duration 5m --no-jfr &      # the service, recording nothing itself

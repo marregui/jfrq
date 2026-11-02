@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.nio.charset.StandardCharsets;
@@ -345,6 +346,52 @@ class LiveTest {
         assertEquals("jfrq-live: JVM 4242 did not answer the clone request in 200 ms; a clone of recording 3 may be"
                 + " left in it: 'jfrq-live 4242 status' lists it and 'jfrq-live 4242 stop --recording ID' closes it\n",
                 err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Every stream a dump opens is closed, whether the dump succeeds, cannot write its file, or loses the JVM
+    /// mid-read: the JVM keeps a closed stream's 1 MiB block for 400 minutes regardless (docs/LIVE.md section 7), and
+    /// one never closed would also pin its chunks on disk for that long.
+    @Test
+    void everyStreamADumpOpensIsClosed() throws Exception {
+        final FlightRecorderMXBean real = ManagementFactory.getPlatformMXBean(FlightRecorderMXBean.class);
+        final List<Long> opened = new CopyOnWriteArrayList<>();
+        final List<Long> closed = new CopyOnWriteArrayList<>();
+        final boolean[] failRead = new boolean[1];
+        final FlightRecorderMXBean counting = (FlightRecorderMXBean) Proxy.newProxyInstance(
+                FlightRecorderMXBean.class.getClassLoader(), new Class<?>[] {FlightRecorderMXBean.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("readStream") && failRead[0]) {
+                        throw new IOException("connection reset");
+                    }
+                    final Object result;
+                    try {
+                        result = method.invoke(real, args);
+                    } catch (final InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                    if (method.getName().equals("openStream")) {
+                        opened.add((Long) result);
+                    } else if (method.getName().equals("closeStream")) {
+                        closed.add((Long) args[0]);
+                    }
+                    return result;
+                });
+        try (final Recording r = new Recording()) {
+            r.setName("streams-" + System.nanoTime());
+            r.setToDisk(true);
+            r.enable("jdk.ThreadSleep").withThreshold(Duration.ZERO);
+            r.start();
+            work();
+            Snapshot.take(counting, PID, r.getId(), Window.EVERYTHING, dir.resolve("ok.jfr"), true);
+            assertThrows(IOException.class, () -> Snapshot.take(counting, PID, r.getId(), Window.EVERYTHING,
+                    dir.resolve("missing").resolve("x.jfr"), true));
+            failRead[0] = true;
+            assertThrows(IOException.class, () -> Snapshot.take(counting, PID, r.getId(), Window.EVERYTHING,
+                    dir.resolve("reset.jfr"), true));
+            r.stop();
+        }
+        assertEquals(3, opened.size(), opened.toString());
+        assertEquals(Set.copyOf(opened), Set.copyOf(closed));
     }
 
     @Test

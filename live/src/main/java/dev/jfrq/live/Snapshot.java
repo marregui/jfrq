@@ -41,8 +41,13 @@ import dev.jfrq.core.util.Durations;
  */
 public record Snapshot(Path file, long bytes, Instant stop) {
 
-    /** JMX moves the file in blocks; the JDK's default is 50 KB, which is a lot of round trips for a 40 MB dump. */
-    private static final int BLOCK_SIZE = 1 << 20;
+    /**
+     * JMX moves the file in blocks. The JDK keeps a closed stream, and its one-block buffer, in
+     * the target for 400 minutes (docs/LIVE.md §7), so the block is what each dump leaves behind.
+     * Measured on a 20–27 MB dump of a live JVM: 1 MiB 0.24 s, 128 KiB 0.26 s, 64 KiB 0.31 s; 128 KiB
+     * holds an eighth of 1 MiB for 20 ms more.
+     */
+    private static final int BLOCK_SIZE = 1 << 17;
 
     /**
      * @param pid     the target's pid, for the line that names a clone the JVM would not close
