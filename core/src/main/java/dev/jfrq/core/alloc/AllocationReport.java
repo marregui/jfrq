@@ -138,7 +138,7 @@ public record AllocationReport(
             return samples + virtualNote(bytes, virtualBytes);
         }
 
-        /** What {@link #withVirtual} adds after the count: {@code " (all virtual)"}, {@code " (95% virtual)"}, or "". */
+        /** What {@link #withVirtual} adds: {@code " (all virtual)"}, {@code " (95% virtual)"}, or nothing. */
         public static String virtualNote(final long bytes, final long virtualBytes) {
             if (virtualBytes <= 0) {
                 return "";
