@@ -15,7 +15,7 @@ another question, what the waiting thread was doing, so it reads both and never 
 the notifier or the holder.
 
 **Rows.** A row is an event type and the class waited on: the monitor's class for a wait
-(`monitorClass`), the blocker's class for a park (`parkedClass`), `(no blocker)` for a
+(`monitorClass`), the blocker's class for a park (`parkedClass`), `(no blocker object)` for a
 park without one. A wait and a park on the same class are two rows, since one is a
 notification and the other a lock or a condition. `--thread` filters by the waiting
 thread's name and `--monitor` by the class, by JVM name or as printed (`byte[]`); each

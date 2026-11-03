@@ -23,8 +23,9 @@ its family (`RecordingSummary.family`, the fold `info` and `hot` use: `kit-jobs`
 started one at a time are one row), and against its stack, named by the `SiteKey` `alloc`
 uses (the innermost frame outside the JDK, or under `--app`'s prefixes). A program that
 starts every process through one helper has that helper as the site of every row:
-on `d-2059.jfr`, `Processes.run` for `git`, `python3` and `claude`, and
-`CodexUsageReader.read` for the one command that does not go through it. The thread family
+on `d-2059.jfr`, `Processes.run` for `git`, `python3` and `claude`; the two commands that
+do not go through it have their own (`CodexUsageReader.read` for `codex`, `Notifier.run`
+for `osascript`). The thread family
 then says which caller it was (`folder-poll` 418 of the `git` starts).
 
 **Rates.** A row's rate is its starts per minute of the recording's span (the span from the

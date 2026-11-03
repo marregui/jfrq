@@ -465,7 +465,7 @@ parse within run-to-run variation for both (58 pause events against 277 thousand
 ```
 core/         the analyses, one pass over the file, no dependencies
 cli/          the jfrq command: argument parsing and text rendering
-live/         the jfrq-live command: dumps from a running JVM, the cursor, the span check
+live/         the jfrq-live command: dumps from a running JVM, the cursor, the span check; watch, histo, growth
 netty-demo/   the demo service and its scenarios
 docs/         README.md (the index), TUTORIAL.md, USAGE.md, RECORDING.md, LIVE.md, JSON.md;
               design/ holds the design: README.md and one file per command

@@ -96,8 +96,9 @@ jfrq locks  demo-lock.jfr --html locks.html
 ```
 
 Then on your own service. Recordings from any JDK 17+ JVM are read; the
-[recommended settings](docs/RECORDING.md#2-the-recommended-settings) also record waits
-down to 1 ms, where the JDK's own settings stop at 10 ms (`profile`) or 20 ms (`default`):
+[recommended settings](docs/RECORDING.md#2-the-recommended-settings) also record monitor
+enters, parks, sleeps and blocking I/O down to 1 ms, where the JDK's own settings stop at
+10 ms (`profile`) or 20 ms (`default`):
 
 ```
 java -XX:StartFlightRecording=filename=app.jfr,settings=profile -jar app.jar
@@ -123,7 +124,7 @@ The index is [docs/README.md](docs/README.md).
 | [TUTORIAL.md](docs/TUTORIAL.md) | Four injected event-loop pathologies, recorded and diagnosed step by step (about fifteen minutes) |
 | [USAGE.md](docs/USAGE.md) | Every command and option, output rules, exit status |
 | [RECORDING.md](docs/RECORDING.md) | What JFR records, and the settings that give `jfrq` a complete answer |
-| [LIVE.md](docs/LIVE.md) | `jfrq-live`: dumps, the cursor, deltas, bounds |
+| [LIVE.md](docs/LIVE.md) | `jfrq-live`: dumps, the cursor, deltas, bounds; `watch`, `histo` and `growth` |
 | [JSON.md](docs/JSON.md) | The `--json` schema |
 | [design/](docs/design/README.md) | The overall design, with one document per command: how each detector works, the JFR events it reads, and what it cannot see |
 

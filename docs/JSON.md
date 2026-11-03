@@ -33,7 +33,7 @@ the text report.
   `OBJECT_WAIT`, `SLEEP`, `BLOCKING_IO`, `BUSY`, `SATURATED`, `GC_PAUSE`, `SAFEPOINT`,
   `UNEXPLAINED`), `evidence` (`EVENT`, `SAMPLES`, `SILENCE`), `sight` (`CLEAR`,
   `NATIVE_SAMPLER`, `JAVA_SAMPLER`, `OWN_ABSENCE`), lock `kind` (`MONITOR_ENTER`, `PARK`),
-  finding `kind` (`OUT_OF_MEMORY`, `EVACUATION_FAILED`, `FULL_GC`, `GC_TIME_OVER_GOAL`,
+  waits `kind` (`WAIT`, `PARK`), finding `kind` (`OUT_OF_MEMORY`, `EVACUATION_FAILED`, `FULL_GC`, `GC_TIME_OVER_GOAL`,
   `PAUSE_OVER_TARGET`, `HUMONGOUS_ALLOCATION`, `METASPACE_GC`, `SYSTEM_GC`), trend `unit`
   (`BYTES`, `COUNT`, `FRACTION`).
 - **A stack** is `{"frames": [...], "culprit": ..., "truncated": ...}`: the innermost
@@ -156,7 +156,7 @@ Every list is cut to `--top`.
 | `totalNanos`, `waits` | the time and count of every wait reported, each counted for the part inside the recording |
 | `clippedWaits` | how many of them began before the recording or outlived it |
 | `classesFound` | how many classes there were before `--top` |
-| `classes[]` | `event` (`jdk.JavaMonitorWait` or `jdk.ThreadPark`), `class` (the monitor's or the blocker's JVM class name, `(no blocker)` for a park without one), `totalNanos`, `waits`, `maxNanos`, `sitesFound`, `sites[]` (`frame`, `totalNanos`, `waits`, `maxNanos`, `belowFound`, `below[]` (`frame`, `totalNanos`, `waits`)) |
+| `classes[]` | `kind` (`WAIT` for `jdk.JavaMonitorWait`, `PARK` for `jdk.ThreadPark`), `class` (the monitor's or the blocker's JVM class name, `(no blocker object)` for a park without one), `totalNanos`, `waits`, `maxNanos`, `sitesFound`, `sites[]` (`frame`, `totalNanos`, `waits`, `maxNanos`, `belowFound`, `below[]` (`frame`, `totalNanos`, `waits`)) |
 
 `below[]` is chosen as in `hot`. Every list is cut to `--top`.
 

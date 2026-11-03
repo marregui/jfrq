@@ -4,6 +4,22 @@ Every command, option and output rule of `jfrq`. [RECORDING.md](RECORDING.md) co
 to make a recording; [LIVE.md](LIVE.md) covers `jfrq-live`; [JSON.md](JSON.md) lists the
 `--json` fields; [design/](design/README.md) explains how each answer is reached.
 
+1. [Requirements](#1-requirements)
+2. [Build and install](#2-build-and-install)
+3. [Synopsis](#3-synopsis)
+4. [Output](#4-output)
+5. [Arguments](#5-arguments)
+6. [`info`](#6-info)
+7. [`hot`](#7-hot)
+8. [`procs`](#8-procs)
+9. [`waits`](#9-waits)
+10. [`alloc`](#10-alloc)
+11. [`locks` and `stalls`](#11-locks-and-stalls)
+12. [`health`](#12-health)
+13. [jfrq-live watch, histo and growth](#13-jfrq-live-watch-histo-and-growth)
+14. [A killed JVM](#14-a-killed-jvm)
+15. [Exit status](#15-exit-status)
+
 ## 1. Requirements
 
 - JDK 25 to build and run (`jdk.jfr` is part of the JDK; the tool has no other dependency).
@@ -42,7 +58,7 @@ jfrq info   recording.jfr [--thread GLOB [--top N]] [--html out.html] [--json]
 jfrq health recording.jfr [more.jfr ...] [--top N] [--html out.html] [--json]
 jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--sites N] [--top N] [--html out.html] [--json]
 jfrq procs  recording.jfr [--app PREFIX] [--top N] [--html out.html] [--json]
-jfrq waits  recording.jfr [--thread GLOB] [--monitor GLOB] [--app PREFIX] [--top N] [--html out.html] [--json]
+jfrq waits  recording.jfr [--thread GLOB] [--monitor GLOB] [--app PREFIX] [--sites N] [--top N] [--html out.html] [--json]
 jfrq alloc  recording.jfr [--baseline before.jfr] [--top N] [--sites] [--app PREFIX] [--html out.html] [--json]
 jfrq locks  recording.jfr [--min 10ms] [--thread GLOB] [--lock GLOB] [--idle REGEX,...] [--by-site] [--top N] [--html out.html] [--json]
 jfrq stalls recording.jfr --thread GLOB [--gap 50ms] [--idle REGEX,...] [--app PREFIX] [--top N] [--html out.html] [--json]
@@ -169,12 +185,12 @@ rest are summed on one entry. `--top` bounds the rows of both tables (in JSON, e
 `waits` answers what threads waited on in `Object.wait` and `LockSupport.park`, from the
 waiting thread's side: `jdk.JavaMonitorWait` by the monitor's class and `jdk.ThreadPark` by
 the blocker's class, each row naming its event (`wait` or `park`) with its total time, count
-and longest wait. A park with no blocker (`LockSupport.parkNanos`) is `(no blocker)`. The
-thread that notified a wait is not used.
+and longest wait. A park with no blocker (`LockSupport.parkNanos`) is `(no blocker object)`,
+the name `stalls` gives it. The thread that notified a wait is not used.
 
 - `--thread GLOB`: only waits by these threads (default: every thread).
 - `--monitor GLOB`: only waits on these classes, by JVM name or as printed:
-  `'*QueueFlusher'`, `'*ReentrantLock*'`, `'byte[]'`, `'(no blocker)'`.
+  `'*QueueFlusher'`, `'*ReentrantLock*'`, `'byte[]'`, `'(no blocker object)'`.
 - `--app PREFIX`: the site rule, as `hot --app`.
 
 Each class is split by site and, under each site, by the frame below it, the rule `hot`
@@ -182,8 +198,10 @@ uses: the outermost frame outside the JDK under the site, else the frame the sit
 The `Thresholds` line prints the events' thresholds: a wait shorter than its threshold is
 not in the file (`20 ms` in `default`, `10 ms` in `profile`), so the totals are those of
 the waits above it. A wait that crosses an end of the recording counts only the part inside
-it. `--top` bounds the classes and the sites per class; three frames are listed below each
-site (in JSON, `--top` of each).
+it. `--top` bounds the classes; `--sites N` lists N sites per class (default 4) and three
+frames below each, and sums the rest on one line that names `--sites`, as `hot` does. In
+JSON every list is cut to `--top`, sites included. The HTML report has the text's header and
+note, and its "below" cell sums its rest too.
 
 To split by a library's frame, name its package in `--app`, a JDK package included. On a
 Swing application on macOS Metal, the event thread's waits on the render queue's flusher:
@@ -193,8 +211,9 @@ jfrq waits d-1257.jfr --thread 'AWT-EventQueue-*' --monitor '*QueueFlusher' --ap
 ```
 
 measured 25.3 s across 1,137 waits, 19.0 s of them in 829 waits under
-`javax.swing.text.html.CSSBorder$SolidPainter.paint`, with `Graphics.fillPolygon` below it.
-Without `--app` the same 1,030 waits sit under the look-and-feel's
+`javax.swing.text.html.CSSBorder$SolidPainter.paint`, with `Graphics.fillPolygon` below it,
+and 4.34 s in 201 under `javax.swing.text.html.ParagraphView.paint`. Without `--app` those
+1,030 waits (829 + 201) sit together under the look-and-feel's
 `FlatEditorPaneUI.paintSafely`, the innermost frame outside the JDK.
 
 ## 10. `alloc`

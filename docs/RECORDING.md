@@ -57,6 +57,12 @@ application did. The `profile` settings also throttle socket and file events to 
 second across the JVM (JDK 25); `jfrq stalls` warns when a throttle is in force, and the
 line above switches it off so no blocking call goes unrecorded.
 
+`jdk.JavaMonitorWait` (an `Object.wait`) is left at the `profile` threshold of 10 ms; what
+lowering it costs has not been measured. `jfrq waits` reads it, so when the question is a
+short `Object.wait` on a thread that should not wait (a UI thread flushing a render queue),
+add `jdk.JavaMonitorWait#threshold=1ms` to the line; `jfrq waits` prints the threshold that
+was active, and nothing shorter is in the file.
+
 ## 3. What `health` needs
 
 `jfrq health` needs nothing beyond either JDK 25 settings file: both record the

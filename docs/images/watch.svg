@@ -42,29 +42,30 @@
   </g>
   <line x1="40" y1="266" x2="1000" y2="266" stroke="#C9A74A" stroke-width="1"/>
   <g font-size="14" fill="#1F1D1A">
-    <text x="40" y="296">a delta dump of the window</text>
-    <text x="40" y="320">each --ask question asked of it</text>
-    <text x="40" y="344">with --histo: a class histogram,</text>
-    <text x="40" y="364">after the full GC it forces</text>
+    <text x="40" y="296">a delta dump of the window (the first:</text>
+    <text x="40" y="316">full, when the JVM has no cursor yet)</text>
+    <text x="40" y="340">each --ask question asked of it</text>
+    <text x="40" y="364">with --histo: a class histogram,</text>
+    <text x="40" y="384">after the full GC it forces</text>
 
     <text x="400" y="296">CPU, heap, threads, open files and</text>
     <text x="400" y="316">committed memory, from the JVM's</text>
     <text x="400" y="336">own MXBeans; no ps, no lsof</text>
 
-    <text x="720" y="296">a summary table per window</text>
-    <text x="720" y="320">the classes that grew in every</text>
-    <text x="720" y="340">histogram, with their counts</text>
+    <text x="720" y="296">one summary table, a row per window</text>
+    <text x="720" y="320">with --histo: the classes that grew</text>
+    <text x="720" y="340">at every histogram, with their counts</text>
     <text x="720" y="364">also on JVM exit and on Ctrl-C</text>
   </g>
   <g font-size="13" fill="#8A6A1F" font-family="Menlo, monospace">
-    <text x="40" y="402">w01-2304.jfr</text>
-    <text x="40" y="422">w01-2304.hot.txt …</text>
-    <text x="40" y="442">w01-2304.histo.txt</text>
-    <text x="400" y="402">samples.tsv</text>
-    <text x="720" y="402">summary.txt</text>
+    <text x="40" y="412">w01-2304.jfr</text>
+    <text x="40" y="430">w01-2304.hot.txt …</text>
+    <text x="40" y="448">w01-2304.histo.txt</text>
+    <text x="400" y="412">samples.tsv</text>
+    <text x="720" y="412">summary.txt</text>
   </g>
 
   <rect x="40" y="474" width="960" height="52" rx="6" fill="none" stroke="#C9A74A" stroke-width="1.2"/>
-  <text x="60" y="505" font-size="14" fill="#1F1D1A">Measured on comando, 6 minutes, 3 windows: 0.63 % of one core; 100–363 ms per window; each forced GC 15–26 ms.</text>
-  <text x="1000" y="548" font-size="11" fill="#9A9388" text-anchor="end">jfrq · docs/images/watch.svg</text>
+  <text x="60" y="505" font-size="14" fill="#1F1D1A">Measured on a Swing application, 6 minutes, 3 windows: 0.63 % of one core; 100–363 ms per window; each forced GC 15–26 ms.</text>
+  <text x="1000" y="548" font-size="11" fill="#5C574E" text-anchor="end">jfrq · LIVE</text>
 </svg>
