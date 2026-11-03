@@ -60,6 +60,19 @@ warning whenever a virtual thread lost a sample, with the count and the bytes le
 (`61 first samples of virtual threads, 3.35 GB, not counted`); those bytes include the
 carriers' history, so they can be far more than what was left out.
 
+**A row that rests on virtual-thread samples says so.** The samples kept on virtual
+threads are weighed by their carriers too, so a row made of them can show the carriers'
+allocation rather than its own. Every row's sample count says what share of the row's
+bytes came from virtual-thread samples (`84 (all virtual)`, `482 (95% virtual)`;
+`virtualBytes` in the JSON). The share is of bytes, not samples: in the same recording,
+25 of the 482 samples of a 73.9 MB row were taken on virtual threads, and they carried
+95 % of its bytes. TLAB events carry no
+carrier history and are not marked. On a
+29-minute recording of a Swing application whose model work runs on virtual threads, a
+method that builds a 100-byte string per call, about 1 KB per call measured in its unit
+test, was ranked second at 203 MB from 16 samples, all virtual; the mark tells the reader
+not to take that number as the method's own.
+
 **A later sample heavier than everything counted is carrier history too.** A virtual
 thread that blocks is unmounted and can resume on another carrier; when that carrier had
 not been sampled in the recording yet, its history lands on the virtual thread's second

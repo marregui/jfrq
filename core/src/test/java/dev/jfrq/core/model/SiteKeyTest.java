@@ -1,14 +1,11 @@
 // Copyright (C) 2026 Miguel Arregui
 // SPDX-License-Identifier: Apache-2.0
 
-package dev.jfrq.core.alloc;
+package dev.jfrq.core.model;
 
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
-
-import dev.jfrq.core.model.Frame;
-import dev.jfrq.core.model.Stack;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

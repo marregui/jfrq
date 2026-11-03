@@ -10,11 +10,23 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
+import java.time.Duration;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import javax.management.Attribute;
+import javax.management.AttributeList;
+import javax.management.JMException;
 import javax.management.MBeanServerConnection;
+import javax.management.ObjectName;
+import javax.management.openmbean.CompositeData;
 import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
 import jdk.management.jfr.FlightRecorderMXBean;
+
+import dev.jfrq.core.util.Durations;
 
 /**
  * A connection to a running JVM's flight recorder. The attach API starts the JVM's local
@@ -27,19 +39,26 @@ import jdk.management.jfr.FlightRecorderMXBean;
  */
 public final class Jvm implements Closeable {
 
+    private static final String DIAGNOSTIC_COMMAND = "com.sun.management:type=DiagnosticCommand";
     private static final String FLIGHT_RECORDER = "jdk.management.jfr:type=FlightRecorder";
+    /** What one sample reads of the OS MBean; an attribute the platform lacks is left out of the answer. */
+    private static final String[] OS_ATTRIBUTES = {"ProcessCpuTime", "CpuLoad", "OpenFileDescriptorCount",
+        "CommittedVirtualMemorySize"};
     private static final String RMI_HOSTNAME = "java.rmi.server.hostname";
     /** How long an attach runs before {@link #attach(String, PrintStream)} says it is attaching. */
     static final long ATTACH_NOTICE_MILLIS = 1_000;
 
     private final JMXConnector connector;
     private final FlightRecorderMXBean flightRecorder;
+    private final MBeanServerConnection mbsc;
     private final String pid;
     private final RuntimeMXBean runtime;
 
-    private Jvm(final String pid, final JMXConnector connector, final FlightRecorderMXBean flightRecorder, final RuntimeMXBean runtime) {
+    private Jvm(final String pid, final JMXConnector connector, final MBeanServerConnection mbsc,
+            final FlightRecorderMXBean flightRecorder, final RuntimeMXBean runtime) {
         this.pid = pid;
         this.connector = connector;
+        this.mbsc = mbsc;
         this.flightRecorder = flightRecorder;
         this.runtime = runtime;
     }
@@ -122,11 +141,7 @@ public final class Jvm implements Closeable {
             // Idempotent: a JVM whose agent is already running answers with the same address.
             address = vm.startLocalManagementAgent();
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                vm.detach();
-            } catch (final IOException | RuntimeException | Error d) {
-                e.addSuppressed(d);
-            }
+            Closing.after(e, vm::detach);
             throw e;
         }
         vm.detach();
@@ -137,13 +152,9 @@ public final class Jvm implements Closeable {
                     FlightRecorderMXBean.class);
             final RuntimeMXBean runtime = ManagementFactory.newPlatformMXBeanProxy(mbsc,
                     ManagementFactory.RUNTIME_MXBEAN_NAME, RuntimeMXBean.class);
-            return new Jvm(pid, connector, fr, runtime);
+            return new Jvm(pid, connector, mbsc, fr, runtime);
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                connector.close();
-            } catch (final IOException | RuntimeException | Error c) {
-                e.addSuppressed(c);
-            }
+            Closing.after(e, connector::close);
             throw e;
         }
     }
@@ -165,8 +176,135 @@ public final class Jvm implements Closeable {
         return runtime.getVmVersion();
     }
 
+    /**
+     * What the JVM says about itself now, over the same connection: three round trips, one each
+     * to the OS, memory and thread MBeans; the clock is this side's. A value the platform does
+     * not report (open file descriptors on Windows, a CPU load not yet known) is -1. The
+     * resident set size is in no MBean.
+     *
+     * @param timeout how long the JVM has to answer each call
+     * @throws IOException the connection failed, or the JVM did not answer within {@code timeout}
+     */
+    Sample sample(final Duration timeout) throws IOException {
+        return within(() -> {
+            try {
+                final AttributeList os = mbsc.getAttributes(
+                        new ObjectName(ManagementFactory.OPERATING_SYSTEM_MXBEAN_NAME), OS_ATTRIBUTES);
+                final CompositeData heap = (CompositeData) mbsc.getAttribute(
+                        new ObjectName(ManagementFactory.MEMORY_MXBEAN_NAME), "HeapMemoryUsage");
+                final Object threads = mbsc.getAttribute(new ObjectName(ManagementFactory.THREAD_MXBEAN_NAME),
+                        "ThreadCount");
+                final Number cpuLoad = valueOrNull(os, "CpuLoad");
+                return new Sample(System.nanoTime(), count(os, "ProcessCpuTime"),
+                        cpuLoad == null ? -1 : cpuLoad.doubleValue(), ((Number) heap.get("used")).longValue(),
+                        ((Number) heap.get("committed")).longValue(), ((Number) threads).longValue(),
+                        count(os, "OpenFileDescriptorCount"), count(os, "CommittedVirtualMemorySize"));
+            } catch (final JMException e) {
+                throw new IOException("JVM " + pid + " refused a sample: " + e.getMessage(), e);
+            }
+        }, timeout, "a sample");
+    }
+
+    /**
+     * One reading of the JVM's own MBeans.
+     *
+     * @param atNanos           this side's {@link System#nanoTime()} when the answer came
+     * @param processCpuNanos   CPU time the process has used since it started, -1 when unknown
+     * @param systemCpuLoad     the whole machine's recent CPU use, 0 to 1; negative when unknown
+     * @param openFds           -1 where the platform has no count
+     */
+    record Sample(long atNanos, long processCpuNanos, double systemCpuLoad, long heapUsedBytes,
+            long heapCommittedBytes, long threads, long openFds, long committedVirtualBytes) {
+    }
+
+    private static long count(final AttributeList list, final String name) {
+        final Number n = valueOrNull(list, name);
+        return n == null ? -1 : n.longValue();
+    }
+
+    /** The attribute's value, or {@code null} when the MBean did not return it. */
+    private static Number valueOrNull(final AttributeList list, final String name) {
+        for (final Attribute a : list.asList()) {
+            if (a.getName().equals(name) && a.getValue() instanceof final Number n) {
+                return n;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The JVM's class histogram, as {@code jcmd <pid> GC.class_histogram} prints it, through
+     * the {@code DiagnosticCommand} MBean. The JVM runs a full GC first, so what it counts is
+     * reachable: that pause shows in the recording as a GC with the cause "Heap Inspection
+     * Initiated GC".
+     *
+     * @throws IOException the connection failed, the JVM refused, or it did not answer within {@code timeout}
+     */
+    String classHistogram(final Duration timeout) throws IOException {
+        return within(() -> {
+            try {
+                return (String) mbsc.invoke(new ObjectName(DIAGNOSTIC_COMMAND), "gcClassHistogram",
+                        new Object[] {new String[0]}, new String[] {String[].class.getName()});
+            } catch (final JMException e) {
+                throw new IOException("JVM " + pid + " refused GC.class_histogram: " + e.getMessage(), e);
+            }
+        }, timeout, "GC.class_histogram");
+    }
+
+    /**
+     * Runs a remote call with a deadline (G-15.1): the call runs on a virtual thread, and a
+     * JVM that has not answered after {@code timeout} is reported as such while the call is
+     * left to the connection's own fate. The connection is not usable for this caller after that.
+     *
+     * @throws IOException what the call threw, or that the JVM did not answer {@code what} in time
+     */
+    static <T> T within(final Slow<T> call, final Duration timeout, final String what) throws IOException {
+        final FutureTask<T> task = new FutureTask<>(call::run);
+        final Thread thread = Thread.ofVirtual().name("jfrq-live " + what).start(task);
+        try {
+            return task.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (final TimeoutException e) {
+            thread.interrupt();
+            throw new IOException("the JVM did not answer " + what + " in " + Durations.format(timeout),
+                    e);
+        } catch (final InterruptedException e) {
+            thread.interrupt();
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while waiting for " + what, e);
+        } catch (final ExecutionException e) {
+            return rethrow(e.getCause());
+        }
+    }
+
+    private static <T> T rethrow(final Throwable cause) throws IOException {
+        if (cause instanceof final IOException io) {
+            throw io;
+        }
+        if (cause instanceof final RuntimeException r) {
+            throw r;
+        }
+        if (cause instanceof final Error error) {
+            throw error;
+        }
+        throw new IOException(cause);
+    }
+
     @Override
     public void close() throws IOException {
         connector.close();
+    }
+
+    /**
+     * {@link #close()} with a deadline: closing an RMI connector is a remote call, which waits
+     * for as long as a frozen JVM does not answer. Past {@code timeout} the close is left to a
+     * virtual thread, which does not hold this process's exit.
+     *
+     * @throws IOException what the close threw, or that the JVM did not answer it in time
+     */
+    void close(final Duration timeout) throws IOException {
+        within(() -> {
+            connector.close();
+            return null;
+        }, timeout, "the connection's close");
     }
 }

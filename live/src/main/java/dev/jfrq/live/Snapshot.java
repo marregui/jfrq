@@ -41,8 +41,15 @@ import dev.jfrq.core.util.Durations;
  */
 public record Snapshot(Path file, long bytes, Instant stop) {
 
-    /** JMX moves the file in blocks; the JDK's default is 50 KB, which is a lot of round trips for a 40 MB dump. */
-    private static final int BLOCK_SIZE = 1 << 20;
+    /**
+     * JMX moves the file in blocks. The JDK keeps a closed stream, and its one-block buffer, in
+     * the target for 400 minutes (docs/LIVE.md §7), so the block is what each dump leaves behind.
+     * One dump per size of a 20–27 MB recording of a live JVM, on an Apple M2 Max laptop with
+     * JDK 25 (Temurin 25+36): 1 MiB 0.24 s, 128 KiB 0.26 s, 64 KiB 0.31 s. The spread between runs
+     * is unmeasured, so the 20 ms between 1 MiB and 128 KiB may be noise; the median and spread of
+     * repeated dumps per size would settle it.
+     */
+    private static final int BLOCK_SIZE = 1 << 17;
 
     /**
      * @param pid     the target's pid, for the line that names a clone the JVM would not close
@@ -109,7 +116,7 @@ public record Snapshot(Path file, long bytes, Instant stop) {
             stream = fr.openStream(clone, options);
         } catch (final IOException e) {
             // "No recording data available": no chunk overlaps the window.
-            throw new IOException("the recording holds no data in the window " + Live.describe(window)
+            throw new IOException("the recording holds no data in the window " + Dumps.describe(window)
                     + " (" + e.getMessage() + ")", e);
         }
         cleanup.stream(stream);
@@ -161,8 +168,9 @@ public record Snapshot(Path file, long bytes, Instant stop) {
      * process is told to stop mid-dump; each resource is detached under the lock and freed
      * outside it (G-4.4), so the hook never waits on a thread that is itself waiting for the
      * JVM. Every step is attempted; the first failure is the one reported and the rest are
-     * suppressed into it (G-4.3). A resource acquired after the cleanup was closed is still
-     * registered, so the next {@link #close} frees it, and the acquisition fails.
+     * suppressed into it, unless a later one is an {@link Error} ({@link Closing#chain}, G-4.3).
+     * A resource acquired after the cleanup was closed is still registered, so the next
+     * {@link #close} frees it, and the acquisition fails.
      */
     static final class Cleanup implements Runnable {
 
@@ -306,21 +314,21 @@ public record Snapshot(Path file, long bytes, Instant stop) {
                     // After a successful dump it has been moved already, and this does nothing.
                     Files.deleteIfExists(t);
                 } catch (final IOException | RuntimeException | Error e) {
-                    failure = chain(failure, e);
+                    failure = Closing.chain(failure, e);
                 }
             }
             if (s >= 0) {
                 try {
                     fr.closeStream(s);
                 } catch (final IOException | RuntimeException | Error e) {
-                    failure = chain(failure, e);
+                    failure = Closing.chain(failure, e);
                 }
             }
             if (c >= 0) {
                 try {
                     fr.closeRecording(c);
                 } catch (final IOException | RuntimeException | Error e) {
-                    failure = chain(failure, e);
+                    failure = Closing.chain(failure, e);
                 } finally {
                     synchronized (this) {
                         pending = false;
@@ -331,12 +339,5 @@ public record Snapshot(Path file, long bytes, Instant stop) {
             return failure;
         }
 
-        private static Throwable chain(final Throwable primary, final Throwable next) {
-            if (primary == null) {
-                return next;
-            }
-            primary.addSuppressed(next);
-            return primary;
-        }
     }
 }

@@ -33,12 +33,16 @@ flowchart LR
     R --> H["HealthCollector<br/>health"]
     R --> T["ThreadCensus<br/>info"]
     R --> P["HotCollector<br/>hot"]
+    R --> PS["ProcessCollector<br/>procs"]
+    R --> W["WaitCollector<br/>waits"]
     A --> M["Report objects"]
     L --> M
     S --> M
     H --> M
     T --> M
     P --> M
+    PS --> M
+    W --> M
     M --> TX["Text"]
     M --> HT["HTML"]
     M --> J["JSON"]
@@ -54,6 +58,8 @@ event types those sinks ask for; everything else is skipped by the parser ([sect
 | [stalls.md](stalls.md) | `stalls` | Idle detection, the three kinds of evidence, measured sampling cadence, pauses, merging |
 | [locks.md](locks.md) | `locks` | Waiting for work versus contention, holder resolution, convoys, perches, moved locks |
 | [hot.md](hot.md) | `hot` | Execution samples by family, site and the frame below it; the timeline |
+| [procs.md](procs.md) | `procs` | Process starts by command, thread family and site; rates per minute |
+| [waits.md](waits.md) | `waits` | Monitor waits and parks by class, site and the frame below it; thresholds, clipping |
 | [alloc.md](alloc.md) | `alloc` | The weighted estimate, first samples, counter calibration, sites, `--baseline` |
 | [health.md](health.md) | `health` | Findings, trends, throwables, thread CPU, native memory, several recordings |
 | [info.md](info.md) | `info` | Settings, thread families and census, attached threads, CPU per family, starts |
@@ -459,7 +465,7 @@ parse within run-to-run variation for both (58 pause events against 277 thousand
 ```
 core/         the analyses, one pass over the file, no dependencies
 cli/          the jfrq command: argument parsing and text rendering
-live/         the jfrq-live command: dumps from a running JVM, the cursor, the span check
+live/         the jfrq-live command: dumps from a running JVM, the cursor, the span check; watch, histo, growth
 netty-demo/   the demo service and its scenarios
 docs/         README.md (the index), TUTORIAL.md, USAGE.md, RECORDING.md, LIVE.md, JSON.md;
               design/ holds the design: README.md and one file per command

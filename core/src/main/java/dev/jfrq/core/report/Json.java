@@ -12,7 +12,6 @@ import java.util.Map;
 
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
 import dev.jfrq.core.health.ThreadCpu;
@@ -21,11 +20,16 @@ import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.Frame;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.procs.ProcessReport;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
+import dev.jfrq.core.util.Count;
+import dev.jfrq.core.waits.WaitReport;
 
 /**
  * The reports as JSON, for a program rather than a person: {@code --json}. Built from the same
@@ -395,7 +399,20 @@ public final class Json {
         w.name("evidence").value(s.evidence().name());
         w.name("detail").value(s.detail());
         w.name("samples").value(s.samples());
+        w.name("holder").value(s.holder().name());
         stack(w, s.stack());
+        w.name("meanwhile").array();
+        for (final Meanwhile m : s.meanwhile()) {
+            w.object();
+            w.name("thread").value(m.thread().name());
+            w.name("javaSamples").value(m.javaSamples());
+            w.name("nativeSamples").value(m.nativeSamples());
+            w.name("frame").value(m.frame());
+            w.name("frameSamples").value(m.frameSamples());
+            w.name("site").value(m.siteOrNull());
+            w.end();
+        }
+        w.end();
         w.end();
     }
 
@@ -591,13 +608,116 @@ public final class Json {
         return w.finish();
     }
 
-    private static void counts(final Writer w, final List<HotReport.Count> counts) {
-        for (final HotReport.Count c : counts) {
+    private static void counts(final Writer w, final List<Count> counts) {
+        counts(w, counts, "frame", "samples");
+    }
+
+    /**
+     * {@code jfrq procs}: the process starts by command, each with its thread families and sites,
+     * and by thread family, every list cut to {@code top}; rates are per minute of the span.
+     */
+    public static String procs(final ProcessReport r, final int top, final String version) {
+        final Writer w = envelope("procs", version, r.info());
+        w.name("processStarts").value(r.starts());
+        w.name("perMinute").value(r.perMinute(r.starts()));
+        w.name("siteKey").value(r.siteKey());
+        w.name("commandsFound").value(r.commands().size());
+        w.name("commands").array();
+        for (final ProcessReport.Command c : top(r.commands(), top)) {
             w.object();
-            w.name("frame").value(c.frame());
-            w.name("samples").value(c.samples());
+            w.name("command").value(c.command());
+            w.name("starts").value(c.starts());
+            w.name("perMinute").value(r.perMinute(c.starts()));
+            w.name("example").value(c.example());
+            w.name("familiesFound").value(c.threads().size());
+            w.name("families").array();
+            counts(w, top(c.threads(), top), "family", "starts");
+            w.end();
+            w.name("sitesFound").value(c.sites().size());
+            w.name("sites").array();
+            counts(w, top(c.sites(), top), "frame", "starts");
+            w.end();
             w.end();
         }
+        w.end();
+        w.name("familiesFound").value(r.families().size());
+        w.name("families").array();
+        for (final ProcessReport.Family f : top(r.families(), top)) {
+            w.object();
+            w.name("family").value(f.name());
+            w.name("threads").value(f.threads());
+            w.name("starts").value(f.starts());
+            w.name("perMinute").value(r.perMinute(f.starts()));
+            w.name("commandsFound").value(f.commands().size());
+            w.name("commands").array();
+            counts(w, top(f.commands(), top), "command", "starts");
+            w.end();
+            w.end();
+        }
+        w.end();
+        return w.finish();
+    }
+
+    /** Each count as an object: its name under {@code nameField}, its count under {@code countField}. */
+    private static void counts(final Writer w, final List<Count> counts, final String nameField,
+            final String countField) {
+        for (final Count c : counts) {
+            w.object();
+            w.name(nameField).value(c.name());
+            w.name(countField).value(c.count());
+            w.end();
+        }
+    }
+
+    /**
+     * {@code jfrq waits}: the waits by event type and class waited on, each split by site and by the
+     * frame below the site, every list cut to {@code top}.
+     */
+    public static String waits(final WaitReport r, final int top, final String version) {
+        final Writer w = envelope("waits", version, r.info());
+        final RecordingInfo info = r.info();
+        w.name("thresholdNanos").object();
+        w.name("jdk.JavaMonitorWait").value(info.thresholdNanos("jdk.JavaMonitorWait"));
+        w.name("jdk.ThreadPark").value(info.thresholdNanos("jdk.ThreadPark"));
+        w.end();
+        w.name("siteKey").value(r.siteKey());
+        w.name("totalNanos").value(r.totalNanos());
+        w.name("waits").value(r.waits());
+        w.name("clippedWaits").value(r.clipped());
+        w.name("classesFound").value(r.classes().size());
+        w.name("classes").array();
+        for (final WaitReport.Monitor m : top(r.classes(), top)) {
+            w.object();
+            w.name("kind").value(m.kind().name());
+            w.name("class").value(m.className());
+            w.name("totalNanos").value(m.totalNanos());
+            w.name("waits").value(m.waits());
+            w.name("maxNanos").value(m.maxNanos());
+            w.name("sitesFound").value(m.sites().size());
+            w.name("sites").array();
+            for (final WaitReport.Site site : top(m.sites(), top)) {
+                w.object();
+                w.name("frame").value(site.frame());
+                w.name("totalNanos").value(site.totalNanos());
+                w.name("waits").value(site.waits());
+                w.name("maxNanos").value(site.maxNanos());
+                w.name("belowFound").value(site.below().size());
+                w.name("below").array();
+                for (final WaitReport.Below b : top(site.below(), top)) {
+                    w.object();
+                    w.name("frame").value(b.frame());
+                    w.name("totalNanos").value(b.totalNanos());
+                    w.name("waits").value(b.waits());
+                    w.end();
+                }
+                w.end();
+                w.end();
+            }
+            w.end();
+            w.end();
+        }
+        w.end();
+        return w.finish();
     }
 
     public static String alloc(final AllocationReport r, final int top, final boolean sites, final SiteKey key,
@@ -614,7 +734,8 @@ public final class Json {
             w.name("countedBytes").value(r.counted(row.key()).orElse(null));
             w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
             w.name("share").value(row.share());
-            w.name("samples").value(r.support().thread(row.key()));
+            w.name("samples").value(r.support().samplesOfThread(row.key()));
+            w.name("virtualBytes").value(r.support().virtualBytesOfThread(row.key()));
             w.name("topClasses").array();
             for (final AllocationReport.Row<String> c : r.classesOf(row.key(), 3)) {
                 w.object();
@@ -635,7 +756,8 @@ public final class Json {
             w.name("bytes").value(row.bytes());
             w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
             w.name("share").value(row.share());
-            w.name("samples").value(r.support().className(row.key()));
+            w.name("samples").value(r.support().samplesOfClass(row.key()));
+            w.name("virtualBytes").value(r.support().virtualBytesOfClass(row.key()));
             w.end();
         }
         w.end();
@@ -661,6 +783,7 @@ public final class Json {
                 w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
                 w.name("share").value(row.share());
                 w.name("samples").value(row.samples());
+                w.name("virtualBytes").value(row.virtualBytes());
                 w.name("stacks").value(row.stacks());
                 stack(w, row.stack());
                 w.end();
@@ -708,8 +831,8 @@ public final class Json {
             w.object();
             w.name("thread").value(x.key());
             delta(w, x);
-            w.name("samplesBefore").value(d.baseline().support().thread(x.key()));
-            w.name("samplesAfter").value(d.current().support().thread(x.key()));
+            w.name("samplesBefore").value(d.baseline().support().samplesOfThread(x.key()));
+            w.name("samplesAfter").value(d.current().support().samplesOfThread(x.key()));
             w.end();
         }
         w.end();
@@ -720,8 +843,8 @@ public final class Json {
             w.object();
             w.name("class").value(x.key());
             delta(w, x);
-            w.name("samplesBefore").value(d.baseline().support().className(x.key()));
-            w.name("samplesAfter").value(d.current().support().className(x.key()));
+            w.name("samplesBefore").value(d.baseline().support().samplesOfClass(x.key()));
+            w.name("samplesAfter").value(d.current().support().samplesOfClass(x.key()));
             w.end();
         }
         w.end();

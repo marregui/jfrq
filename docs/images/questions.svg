@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="700" viewBox="0 0 1040 700" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1040" height="700" fill="#FBF8F1"/>
+  <text x="40" y="52" font-size="24" fill="#1F1D1A" letter-spacing="0.5">One question per command</text>
+  <text x="40" y="78" font-size="14" fill="#5C574E">Each command reads only the JFR events its question needs, in one pass over the file.</text>
+
+  <g font-size="12" fill="#8A6A1F" letter-spacing="2">
+    <text x="40" y="118">QUESTION</text>
+    <text x="560" y="118">COMMAND</text>
+    <text x="690" y="118">MAIN EVENTS READ</text>
+  </g>
+  <line x1="40" y1="128" x2="1000" y2="128" stroke="#C9A74A" stroke-width="1"/>
+
+  <g font-size="15" fill="#1F1D1A">
+    <text x="40" y="160">Why did the event loop stop, and what was it waiting for?</text>
+    <text x="40" y="206">Which locks were contended, who held them, which holders were blocked?</text>
+    <text x="40" y="252">Which threads, classes and sites allocate, in bytes per second?</text>
+    <text x="40" y="298">Where did the CPU go, by thread family, method and the code below it?</text>
+    <text x="40" y="344">Which threads waited on which monitor, for how long, from where?</text>
+    <text x="40" y="390">Which processes did the JVM start, from which thread, how often?</text>
+    <text x="40" y="436">What did the JVM report about itself: GC, heap floors, throwables?</text>
+    <text x="40" y="482">What is in the file: span, threads, events, settings?</text>
+  </g>
+
+  <g font-size="15" fill="#8A6A1F" font-family="Menlo, monospace">
+    <text x="560" y="160">stalls</text>
+    <text x="560" y="206">locks</text>
+    <text x="560" y="252">alloc</text>
+    <text x="560" y="298">hot</text>
+    <text x="560" y="344">waits</text>
+    <text x="560" y="390">procs</text>
+    <text x="560" y="436">health</text>
+    <text x="560" y="482">info</text>
+  </g>
+
+  <g font-size="13" fill="#4A463F">
+    <text x="690" y="160">Execution and native samples, monitor enters</text>
+    <text x="690" y="176">and waits, parks, sleeps, socket and file I/O, pauses</text>
+    <text x="690" y="206">JavaMonitorEnter, ThreadPark, GC pauses</text>
+    <text x="690" y="244">ObjectAllocationSample (or the TLAB events),</text>
+    <text x="690" y="260">ThreadAllocationStatistics</text>
+    <text x="690" y="298">ExecutionSample</text>
+    <text x="690" y="344">JavaMonitorWait, ThreadPark</text>
+    <text x="690" y="390">ProcessStart</text>
+    <text x="690" y="436">GC, heap summary, CPU load, throwables, NMT</text>
+    <text x="690" y="482">every event type</text>
+  </g>
+
+  <g stroke="#E6DCC4" stroke-width="1">
+    <line x1="40" y1="184" x2="1000" y2="184"/>
+    <line x1="40" y1="230" x2="1000" y2="230"/>
+    <line x1="40" y1="276" x2="1000" y2="276"/>
+    <line x1="40" y1="322" x2="1000" y2="322"/>
+    <line x1="40" y1="368" x2="1000" y2="368"/>
+    <line x1="40" y1="414" x2="1000" y2="414"/>
+    <line x1="40" y1="460" x2="1000" y2="460"/>
+  </g>
+
+  <rect x="40" y="520" width="960" height="132" rx="6" fill="none" stroke="#C9A74A" stroke-width="1.2"/>
+  <text x="60" y="550" font-size="12" fill="#8A6A1F" letter-spacing="2">JFRQ-LIVE: THE SAME QUESTIONS, ASKED OF A RUNNING JVM</text>
+  <g font-size="14" fill="#1F1D1A">
+    <text x="60" y="580" font-family="Menlo, monospace" fill="#8A6A1F">full · delta · again</text>
+    <text x="250" y="580">dump a window of the JVM's recording and ask any command above of it</text>
+    <text x="60" y="606" font-family="Menlo, monospace" fill="#8A6A1F">watch</text>
+    <text x="250" y="606">one process for hours: a window every N minutes, the questions, samples, a summary</text>
+    <text x="60" y="632" font-family="Menlo, monospace" fill="#8A6A1F">histo · growth</text>
+    <text x="250" y="632">class histograms after a full GC, and the classes that grew in every one</text>
+  </g>
+  <text x="1000" y="684" font-size="11" fill="#5C574E" text-anchor="end">jfrq · README</text>
+</svg>

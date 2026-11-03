@@ -50,6 +50,14 @@ These are design decisions; changing them is a design change, not a local edit.
 - The JDK exposes event timestamps only as `Instant`, so `getStartTime()` allocates once per read; the value is
   converted to `long` immediately and nothing else is kept.
 - G-10.8, signature wrapping: a signature over the line limit wraps where it is long, not one parameter per line.
+- G-10.1, member order (Miguel, 2026-11-03): a collector's methods follow the `Sink` protocol as it runs: the
+  constructor, `begin`, `eventTypes`, `accept`, then the per-event helpers `accept` calls (`sample`, `start`,
+  `waitsOf`), `finish` with the helpers it calls, `report`, and the nested accumulators last. A static helper
+  stays beside its caller rather than among the statics, so the per-event path reads in one place.
+- G-10.5, test names (Miguel, 2026-11-03): `MainTest`'s end-to-end test of each command is named for the command
+  (`procs()`, `waits()`). Each runs the whole command on a real recording and checks many behaviours of its output,
+  options and errors, so the command is what a failure report needs to name. Tests of one behaviour are named for
+  it, as G-10.5 says.
 
 ## 5. Not applied
 
@@ -72,8 +80,6 @@ Not applied yet. These are not waived: findings against them are still reported;
 - G-11.7: 377 of 394 test methods and 16 of 33 test classes have no doc comment, and the 17 that do use `/** */`.
   Plan: `///` on each test as it is touched; a pass over `core` first.
 - G-10.8, line limit: 218 lines are over 120 characters. Plan: rewrap as touched; no bulk reformat.
-- G-4.3: `live` suppresses an `Error` from cleanup in 7 places (for example `Snapshot.chain`). Plan: fix with the next `live`
-  change.
 - G-7.13 (12 `volatile` fields that do not name their threads), G-7.14 (2 unnamed thread sources), G-13.5 (test-only
   methods without `@TestOnly`), G-14.13 (time values without their unit, about 100 by sample), G-16.3 (29 unused
   variables not `_`), G-16.10 (5 `var` with a factory on the right, in tests): as touched.

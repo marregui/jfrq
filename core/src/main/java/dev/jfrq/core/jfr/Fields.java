@@ -25,7 +25,8 @@ public final class Fields {
     public static final int BYTES_READ = ALLOCATION_SIZE + 1;
     public static final int BYTES_WRITTEN = BYTES_READ + 1;
     public static final int CAUSE = BYTES_WRITTEN + 1;
-    public static final int COMMITTED = CAUSE + 1;
+    public static final int COMMAND = CAUSE + 1;
+    public static final int COMMITTED = COMMAND + 1;
     public static final int GC_ID = COMMITTED + 1;
     public static final int GC_TIME_RATIO = GC_ID + 1;
     public static final int HEAP_USED = GC_TIME_RATIO + 1;
@@ -82,6 +83,7 @@ public final class Fields {
         NAMES[BYTES_READ] = "bytesRead";
         NAMES[BYTES_WRITTEN] = "bytesWritten";
         NAMES[CAUSE] = "cause";
+        NAMES[COMMAND] = "command";
         NAMES[COMMITTED] = "committed";
         NAMES[GC_ID] = "gcId";
         NAMES[GC_TIME_RATIO] = "gcTimeRatio";

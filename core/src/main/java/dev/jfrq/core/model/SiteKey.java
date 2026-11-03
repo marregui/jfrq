@@ -1,16 +1,14 @@
 // Copyright (C) 2026 Miguel Arregui
 // SPDX-License-Identifier: Apache-2.0
 
-package dev.jfrq.core.alloc;
+package dev.jfrq.core.model;
 
 import java.util.List;
 
-import dev.jfrq.core.model.Frame;
-import dev.jfrq.core.model.Stack;
-
 /**
- * What an allocation stack is called when sites are ranked, and therefore which stacks are
- * one row.
+ * What a stack is called when sites are ranked, and therefore which stacks are one row:
+ * {@code alloc --sites}, {@code hot}, {@code procs}, {@code waits} and the sites of
+ * {@code stalls} share it.
  *
  * <p>A single logical allocation reaches the sampler down many different paths: the same
  * method allocating on two of its lines, the same line reached through a different depth of
@@ -34,6 +32,9 @@ public interface SiteKey {
     /** What a stack with no frames at all is called. */
     String NO_STACK = "(no stack)";
 
+    /** What {@link #below} says for a stack whose site is its innermost frame. */
+    String AT_SITE = "(the site itself)";
+
     /** The default key, held once: a strategy object belongs to the run, not to the call site. */
     SiteKey CULPRIT_METHOD = Stack::culpritOrTopIndex;
 
@@ -49,9 +50,37 @@ public interface SiteKey {
         return index < 0 ? NO_STACK : method(stack.frameQuick(index));
     }
 
+    /**
+     * Whether this key was asked for with {@code --app}: it names the innermost frame in the
+     * packages given rather than the default culprit. A command whose output differs under
+     * {@code --app} reads this, not the key's identity.
+     */
+    default boolean fromApp() {
+        return false;
+    }
+
     /** What the rows are, in the words the report prints above them. */
     default String description() {
-        return "the innermost frame outside the JDK";
+        return "the innermost frame outside the JDK, or the top frame of a stack that is all JDK";
+    }
+
+    /**
+     * What a stack was doing below its site, the frame at {@code at}: the outermost frame under
+     * the site that is not JDK code, so a container that only dispatches ({@code paint} calling
+     * its children's) is split by the code it dispatched to; else the frame the site called, where
+     * everything below it is JDK code ({@code invokeLater}, not the {@code HashMap} inside it);
+     * {@link #AT_SITE} when the site is the leaf. {@code hot} and {@code waits} split their sites by it.
+     */
+    static String below(final Stack stack, final int at) {
+        if (at <= 0) {
+            return AT_SITE;
+        }
+        for (int i = at - 1; i >= 0; i--) {
+            if (!stack.frameQuick(i).isJdk()) {
+                return stack.frameQuick(i).stableName();
+            }
+        }
+        return stack.frameQuick(at - 1).stableName();
     }
 
     /** The innermost non-JDK frame, without its line: {@code com.example.Parser.parse}. */
@@ -85,9 +114,14 @@ public interface SiteKey {
             }
 
             @Override
+            public boolean fromApp() {
+                return true;
+            }
+
+            @Override
             public String description() {
                 return "the innermost frame in " + String.join(" or ", prefixes)
-                        + ", or outside the JDK where there is none";
+                        + ", or outside the JDK where there is none, or the top frame of a stack that is all JDK";
             }
         };
     }

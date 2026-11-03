@@ -3,4 +3,4 @@
 // whole build without chasing convention plugins.
 
 group = "dev.jfrq"
-version = "0.2.0-SNAPSHOT"
+version = "0.2.0"

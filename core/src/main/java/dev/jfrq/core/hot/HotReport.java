@@ -7,6 +7,8 @@ import java.time.Instant;
 import java.util.List;
 
 import dev.jfrq.core.jfr.RecordingInfo;
+import dev.jfrq.core.model.SiteKey;
+import dev.jfrq.core.util.Count;
 
 /**
  * Where the CPU went, from {@code jdk.ExecutionSample}: every list ranked by samples, most first,
@@ -21,22 +23,13 @@ import dev.jfrq.core.jfr.RecordingInfo;
  * @param originNanos the start of the first bucket, epoch nanoseconds, a multiple of the width
  * @param buckets     how many buckets each {@link Group#timeline} has
  * @param groups      the thread families
- * @param leaves      the innermost frame of every sample, across families
+ * @param leaves      the innermost frame of every sample, across families, with its samples
  */
 public record HotReport(RecordingInfo info, long samples, String siteKey, long bucketNanos, long originNanos,
         int buckets, List<Group> groups, List<Count> leaves) {
 
-    /** Sites listed per family, by every renderer; the rest are summed on one line. */
-    public static final int SITES_SHOWN = 4;
-
-    /** Frames listed below each site, by every renderer; the rest are summed on one line. */
-    public static final int NEXT_SHOWN = 3;
-
     /** Families given a column of their own in the timeline, beside the total. */
     public static final int TIMELINE_GROUPS = 5;
-
-    /** What {@link Site#next} says for the samples whose site is their innermost frame. */
-    public static final String AT_SITE = "(the site itself)";
 
     /** {@code part}'s share of every sample, 0 when there are none. */
     public double share(final long part) {
@@ -80,13 +73,9 @@ public record HotReport(RecordingInfo info, long samples, String siteKey, long b
      *
      * @param frame   {@code pkg.Class.method}
      * @param samples the samples whose stack names this site
-     * @param next    the same samples by the outermost non-JDK frame below the site, else the frame
-     *                the site called, else {@link #AT_SITE}
+     * @param next    the same samples by {@link SiteKey#below}: the outermost non-JDK frame below the
+     *                site, else the frame the site called, else {@link SiteKey#AT_SITE}; a count is samples
      */
     public record Site(String frame, long samples, List<Count> next) {
-    }
-
-    /** A frame and how many samples it accounts for. */
-    public record Count(String frame, long samples) {
     }
 }

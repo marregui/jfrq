@@ -33,7 +33,7 @@ the text report.
   `OBJECT_WAIT`, `SLEEP`, `BLOCKING_IO`, `BUSY`, `SATURATED`, `GC_PAUSE`, `SAFEPOINT`,
   `UNEXPLAINED`), `evidence` (`EVENT`, `SAMPLES`, `SILENCE`), `sight` (`CLEAR`,
   `NATIVE_SAMPLER`, `JAVA_SAMPLER`, `OWN_ABSENCE`), lock `kind` (`MONITOR_ENTER`, `PARK`),
-  finding `kind` (`OUT_OF_MEMORY`, `EVACUATION_FAILED`, `FULL_GC`, `GC_TIME_OVER_GOAL`,
+  waits `kind` (`WAIT`, `PARK`), finding `kind` (`OUT_OF_MEMORY`, `EVACUATION_FAILED`, `FULL_GC`, `GC_TIME_OVER_GOAL`,
   `PAUSE_OVER_TARGET`, `HUMONGOUS_ALLOCATION`, `METASPACE_GC`, `SYSTEM_GC`), trend `unit`
   (`BYTES`, `COUNT`, `FRACTION`).
 - **A stack** is `{"frames": [...], "culprit": ..., "truncated": ...}`: the innermost
@@ -82,7 +82,9 @@ the text report.
 | `byVerdict[]` | `verdict`, `stalls`, `stalledNanos`, `worstNanos`, largest total first |
 | `threadsWithStalls`, `threadsWithoutStalls` | the counts behind `threads` |
 | `threads[]` | the threads that stalled, most stalled first: `thread`, `threadId`, `virtual`, `samples`, `javaCadenceNanos`, `nativeCadenceNanos`, `sight`, `unseenBelowNanos` (the shortest unexplained stall the samples can show; one longer than the recording means none, which the text prints as a dash), `stalls`, `stalledNanos`, `worstNanos` |
-| `stallsFound`, `stalls[]` | the explained stalls, longest first: `thread`, `start`, `offsetNanos`, `durationNanos`, `verdict`, `evidence`, `detail`, `samples`, `stack` |
+| `stallsFound`, `stalls[]` | the explained stalls, longest first: `thread`, `start`, `offsetNanos`, `durationNanos`, `verdict`, `evidence`, `detail`, `samples`, `holder`, `stack`, `meanwhile` |
+| `stalls[].holder` | whether the stall waited on a lock and whether the recording names who held it: `NOT_A_LOCK` (a sleep, an `Object.wait`, blocking I/O, a park on no object, a run of samples, a pause), `UNRECORDED` (a park on an object, or a monitor enter with no recorded owner; only these carry `meanwhile`), `KNOWN` (a monitor enter whose holder the recording names) |
+| `stalls[].meanwhile[]` | for a park on a lock, or a monitor enter whose holder is unknown, up to three other threads the sampler saw running during it, a correlation and not a holder; empty otherwise: `thread`, `javaSamples`, `nativeSamples` (samples inside the stall that are not idle), `frame` (the innermost frame most of them had), `frameSamples` (how many had it), `site` (the site under `--app`, `null` without it) |
 | `unexplainedFound`, `unexplained[]` | the unexplained gaps, the same shape |
 | `pausesFound`, `pauses[]` | JVM-wide pauses at least the gap long: `start`, `offsetNanos`, `durationNanos`, `kind` (`GC`, `SAFEPOINT`), `detail` |
 
@@ -133,6 +135,31 @@ per recording in the order given, each a `recording` object followed by every fi
 `below[]` names the outermost frame outside the JDK under the site, else the frame the site called, else
 `(the site itself)`. Every list is cut to `--top`.
 
+## `procs`
+
+| Field | |
+|---|---|
+| `processStarts`, `perMinute` | every `jdk.ProcessStart` read, and that count per minute of the recording's span |
+| `siteKey` | how a site is chosen, in words |
+| `commandsFound`, `familiesFound` | how many rows each list had before `--top` |
+| `commands[]` | `command` (the basename of the command line's first word, `(empty)` when it has none), `starts`, `perMinute`, `example` (the earliest command line under that name, whole), `familiesFound`, `families[]` (`family`, `starts`), `sitesFound`, `sites[]` (`frame`, `starts`) |
+| `families[]` | `family`, `threads` (how many of its threads started a process), `starts`, `perMinute`, `commandsFound`, `commands[]` (`command`, `starts`) |
+
+Every list is cut to `--top`.
+
+## `waits`
+
+| Field | |
+|---|---|
+| `thresholdNanos` | `jdk.JavaMonitorWait` and `jdk.ThreadPark`: waits shorter than these are not in the file; `null` when the recording has no settings for one |
+| `siteKey` | how a site is chosen, in words |
+| `totalNanos`, `waits` | the time and count of every wait reported, each counted for the part inside the recording |
+| `clippedWaits` | how many of them began before the recording or outlived it |
+| `classesFound` | how many classes there were before `--top` |
+| `classes[]` | `kind` (`WAIT` for `jdk.JavaMonitorWait`, `PARK` for `jdk.ThreadPark`), `class` (the monitor's or the blocker's JVM class name, `(no blocker object)` for a park without one), `totalNanos`, `waits`, `maxNanos`, `sitesFound`, `sites[]` (`frame`, `totalNanos`, `waits`, `maxNanos`, `belowFound`, `below[]` (`frame`, `totalNanos`, `waits`)) |
+
+`below[]` is chosen as in `hot`. Every list is cut to `--top`.
+
 ## `alloc`
 
 | Field | |
@@ -142,9 +169,9 @@ per recording in the order given, each a `recording` object followed by every fi
 | `estimatedBytes`, `bytesPerSecond` | the estimate |
 | `counted` | whether the JVM's own per-thread counters were in the file; when they were: `countedBytes`, `countedThreads`, `estimatedOnCountedThreads`, `estimateError`, over the threads with a counter; `estimatedOnCountedThreads` is their estimate over the stretch each counter covers, from its first reading (or the thread's start) to its last, so the two compare like for like. A `threads[]` row's `countedBytes` is `null` unless that stretch holds 95 % of the row's `bytes` |
 | `threadsFound`, `classesFound`, `packagesFound`, `sitesFound` | how many rows each list had before `--top` (the last two with `--sites`) |
-| `threads[]` | `thread`, `bytes`, `countedBytes`, `bytesPerSecond`, `share`, `samples`, `topClasses[]` (`class`, `bytes`) |
-| `classes[]` | `class` (the JVM name, `[B` for `byte[]`), `bytes`, `bytesPerSecond`, `share`, `samples` |
-| `siteKey`, `packages[]`, `sites[]` | with `--sites`: how sites are keyed, the package roots seen (`package`, `share`), and `site`, `bytes`, `bytesPerSecond`, `share`, `samples`, `stacks`, `stack` |
+| `threads[]` | `thread`, `bytes`, `countedBytes`, `bytesPerSecond`, `share`, `samples`, `virtualBytes` (of `bytes`, those from samples taken on virtual threads, each weighed by its carrier's allocation, so that part of the row can be far from its own code's; 0 for TLAB events, which carry no carrier history), `topClasses[]` (`class`, `bytes`) |
+| `classes[]` | `class` (the JVM name, `[B` for `byte[]`), `bytes`, `bytesPerSecond`, `share`, `samples`, `virtualBytes` |
+| `siteKey`, `packages[]`, `sites[]` | with `--sites`: how sites are keyed, the package roots seen (`package`, `share`), and `site`, `bytes`, `bytesPerSecond`, `share`, `samples`, `virtualBytes`, `stacks`, `stack` |
 
 With `--baseline`, `recording` is the current file and the document instead has
 `baseline` (its own `recording` object and the estimate fields above), `current` (the

@@ -99,11 +99,7 @@ public final class Cursor {
                 channel.lock();
             }
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                channel.close();
-            } catch (final IOException | RuntimeException | Error c) {
-                e.addSuppressed(c);
-            }
+            Closing.after(e, channel::close);
             throw e;
         }
         // Closing the channel releases every lock taken through it.
@@ -152,11 +148,7 @@ public final class Cursor {
                 Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                Files.deleteIfExists(temporary);
-            } catch (final IOException | RuntimeException | Error d) {
-                e.addSuppressed(d);
-            }
+            Closing.after(e, () -> Files.deleteIfExists(temporary));
             throw e;
         }
     }

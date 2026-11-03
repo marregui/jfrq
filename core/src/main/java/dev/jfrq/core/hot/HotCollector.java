@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.Set;
 import jdk.jfr.consumer.RecordedEvent;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.IdentityObjObjHashMap;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.ObjLongHashMap;
@@ -22,9 +21,12 @@ import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.report.RecordingSummary;
+import dev.jfrq.core.util.Count;
+import dev.jfrq.core.util.Listing;
 
 /**
  * Where the CPU went: {@code jdk.ExecutionSample} by thread family, by the frame a {@link SiteKey}
@@ -150,7 +152,7 @@ public final class HotCollector implements JfrReader.Sink {
         groups.sort(Comparator.comparingLong(HotReport.Group::samples).reversed()
                 .thenComparing(HotReport.Group::name));
         report = new HotReport(info, total, key.description(), widthNanos, originNanos, buckets, List.copyOf(groups),
-                ranked(leaves));
+                Count.ranked(leaves));
     }
 
     private HotReport.Group group(final Family family, final Map<String, Long> leaves, final long originNanos,
@@ -162,19 +164,15 @@ public final class HotCollector implements JfrReader.Sink {
                 final Stack stack = stacks.keyAtSlot(s);
                 final long samples = stacks.valueAtSlot(s);
                 final int at = key.frameIndex(stack);
-                final String site = at < 0 ? SiteKey.NO_STACK : stack.frameQuick(at).stableName();
-                sites.computeIfAbsent(site, _ -> new HashMap<>()).merge(below(stack, at), samples, Long::sum);
+                sites.computeIfAbsent(key.of(stack), _ -> new HashMap<>())
+                        .merge(SiteKey.below(stack, at), samples, Long::sum);
                 leaves.merge(at < 0 ? SiteKey.NO_STACK : stack.frameQuick(0).stableName(), samples, Long::sum);
             }
         }
         final List<HotReport.Site> rows = new ArrayList<>(sites.size());
         for (final Map.Entry<String, Map<String, Long>> e : sites.entrySet()) {
-            final List<HotReport.Count> next = ranked(e.getValue());
-            long samples = 0;
-            for (final HotReport.Count c : next) {
-                samples += c.samples();
-            }
-            rows.add(new HotReport.Site(e.getKey(), samples, next));
+            final List<Count> next = Count.ranked(e.getValue());
+            rows.add(new HotReport.Site(e.getKey(), Listing.sum(next, Count::count), next));
         }
         rows.sort(Comparator.comparingLong(HotReport.Site::samples).reversed().thenComparing(HotReport.Site::frame));
         final long[] timeline = new long[buckets];
@@ -188,34 +186,6 @@ public final class HotCollector implements JfrReader.Sink {
         }
         return new HotReport.Group(family.name, family.threads, times.size(), List.copyOf(rows),
                 List.copyOf(perBucket));
-    }
-
-    /**
-     * What the site's samples were doing below it: the outermost frame under the site that is not
-     * JDK code, so a container that only dispatches ({@code paint} calling its children's) is split
-     * by the code it dispatched to; else the frame the site called, where everything below it is JDK
-     * code ({@code invokeLater}, not the {@code HashMap} inside it, which the leaf table already has);
-     * {@link HotReport#AT_SITE} when the site is the leaf.
-     */
-    static String below(final Stack stack, final int at) {
-        if (at <= 0) {
-            return HotReport.AT_SITE;
-        }
-        for (int i = at - 1; i >= 0; i--) {
-            if (!stack.frameQuick(i).isJdk()) {
-                return stack.frameQuick(i).stableName();
-            }
-        }
-        return stack.frameQuick(at - 1).stableName();
-    }
-
-    private static List<HotReport.Count> ranked(final Map<String, Long> counts) {
-        final List<HotReport.Count> rows = new ArrayList<>(counts.size());
-        for (final Map.Entry<String, Long> e : counts.entrySet()) {
-            rows.add(new HotReport.Count(e.getKey(), e.getValue()));
-        }
-        rows.sort(Comparator.comparingLong(HotReport.Count::samples).reversed().thenComparing(HotReport.Count::frame));
-        return List.copyOf(rows);
     }
 
     /** The answer, after {@link #finish}. */

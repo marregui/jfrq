@@ -12,24 +12,29 @@ import java.util.Set;
 
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
 import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.report.RecordingSummary;
 import dev.jfrq.core.report.ThreadCensus;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Perch;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
 import dev.jfrq.core.util.Bytes;
 import dev.jfrq.core.util.ClassNames;
+import dev.jfrq.core.util.Count;
 import dev.jfrq.core.util.Durations;
+import dev.jfrq.core.util.Listing;
 import dev.jfrq.core.util.TextTable;
+import dev.jfrq.core.waits.WaitReport;
 
 /** Terminal rendering of every report. Plain text, paste-able into a ticket. */
 final class Text {
@@ -362,7 +367,9 @@ final class Text {
                         .append(String.format(Locale.ROOT, "%.0f%%", 100.0 * c.bytes() / Math.max(1, row.bytes())));
             }
             threads.row(row.key(), Bytes.format(row.bytes()), r.counted(row.key()).map(Bytes::format).orElse(""),
-                    Bytes.rate(r.rate(row.bytes())), pct(row.share()), r.support().thread(row.key()), classes);
+                    Bytes.rate(r.rate(row.bytes())), pct(row.share()), AllocationReport.Support.withVirtual(
+                    r.support().samplesOfThread(row.key()), row.bytes(),
+                    r.support().virtualBytesOfThread(row.key())), classes);
         }
         sb.append(threads.render("  "));
 
@@ -370,7 +377,8 @@ final class Text {
         final TextTable classes = new TextTable("Class", "Bytes", "Rate", "Share", "Samples").numeric(1, 2, 3, 4);
         for (final AllocationReport.Row<String> row : r.classes(top)) {
             classes.row(ClassNames.pretty(row.key()), Bytes.format(row.bytes()), Bytes.rate(r.rate(row.bytes())),
-                    pct(row.share()), r.support().className(row.key()));
+                    pct(row.share()), AllocationReport.Support.withVirtual(r.support().samplesOfClass(row.key()),
+                    row.bytes(), r.support().virtualBytesOfClass(row.key())));
         }
         sb.append(classes.render("  "));
 
@@ -379,9 +387,10 @@ final class Text {
             sb.append(packages(r, key));
             int n = 1;
             for (final AllocationReport.SiteRow row : r.sites(key, top)) {
-                sb.append(String.format(Locale.ROOT, "  %2d  %10s  %10s  %6s  %d sample%s  %s%s\n", n++,
+                sb.append(String.format(Locale.ROOT, "  %2d  %10s  %10s  %6s  %d sample%s%s  %s%s\n", n++,
                         Bytes.format(row.bytes()), Bytes.rate(r.rate(row.bytes())), pct(row.share()),
-                        row.samples(), row.samples() == 1 ? "" : "s", row.label(),
+                        row.samples(), row.samples() == 1 ? "" : "s",
+                        AllocationReport.Support.virtualNote(row.bytes(), row.virtualBytes()), row.label(),
                         row.stacks() > 1 ? "  (" + row.stacks() + " stacks, the biggest below)" : ""));
                 sb.append(row.stack().pretty("        ", STACK_FRAMES));
             }
@@ -445,8 +454,8 @@ final class Text {
         final TextTable threads = new TextTable("Thread", "Before", "After", "Change", "", "Samples").numeric(1, 2, 3);
         for (final AllocationDiff.Delta<String> x : d.threads(top)) {
             threads.row(x.key(), Bytes.rate(x.beforeRate()), Bytes.rate(x.afterRate()), Bytes.signedRate(x.delta()),
-                    ratio(x.ratio()), d.baseline().support().thread(x.key()) + " -> "
-                            + d.current().support().thread(x.key()));
+                    ratio(x.ratio()), d.baseline().support().samplesOfThread(x.key()) + " -> "
+                            + d.current().support().samplesOfThread(x.key()));
         }
         sb.append(threads.render("  "));
 
@@ -454,8 +463,9 @@ final class Text {
         final TextTable classes = new TextTable("Class", "Before", "After", "Change", "", "Samples").numeric(1, 2, 3);
         for (final AllocationDiff.Delta<String> x : d.classes(top)) {
             classes.row(ClassNames.pretty(x.key()), Bytes.rate(x.beforeRate()), Bytes.rate(x.afterRate()),
-                    Bytes.signedRate(x.delta()), ratio(x.ratio()), d.baseline().support().className(x.key()) + " -> "
-                            + d.current().support().className(x.key()));
+                    Bytes.signedRate(x.delta()), ratio(x.ratio()),
+                    d.baseline().support().samplesOfClass(x.key()) + " -> "
+                            + d.current().support().samplesOfClass(x.key()));
         }
         sb.append(classes.render("  "));
 
@@ -659,7 +669,8 @@ final class Text {
         return sb.toString();
     }
 
-    static String hot(final HotReport r, final int top) {
+    /** {@code sites}: the sites listed per family, {@code --sites}. */
+    static String hot(final HotReport r, final int top, final int sites) {
         final StringBuilder sb = new StringBuilder(header(r.info()));
         sb.append(settingsLine(r.info(), "Sampling", "jdk.ExecutionSample"));
         if (r.samples() == 0) {
@@ -669,43 +680,40 @@ final class Text {
         }
         sb.append(String.format(Locale.ROOT, "%-10s %d of threads running Java code, in %d %s\n", "Samples",
                 r.samples(), r.groups().size(), r.groups().size() == 1 ? "family" : "families"));
-        sb.append(wrap("a site is " + r.siteKey() + "; under it, the outermost frame outside the JDK below the "
-                + "site, else the frame the site called", String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
+        sb.append(wrap(Listing.sites(r.siteKey()), String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
 
         sb.append("\nBY THREAD FAMILY\n");
         for (final HotReport.Group g : shown(r.groups(), top)) {
             sb.append(String.format(Locale.ROOT, "%8d %6s  %s%s\n", g.samples(), pct(r.share(g.samples())), g.name(),
                     g.threads() == 1 ? "" : " (" + g.threads() + " threads)"));
-            long rest = g.samples();
-            for (final HotReport.Site site : shown(g.sites(), HotReport.SITES_SHOWN)) {
+            for (final HotReport.Site site : shown(g.sites(), sites)) {
                 sb.append(String.format(Locale.ROOT, "%17d  %s\n", site.samples(), site.frame()));
-                rest -= site.samples();
-                long under = site.samples();
-                if (site.next().size() == 1 && site.next().getFirst().frame().equals(HotReport.AT_SITE)) {
+                if (site.next().size() == 1 && site.next().getFirst().name().equals(SiteKey.AT_SITE)) {
                     continue;
                 }
-                for (final HotReport.Count c : shown(site.next(), HotReport.NEXT_SHOWN)) {
-                    sb.append(String.format(Locale.ROOT, "%24d    %s\n", c.samples(), c.frame()));
-                    under -= c.samples();
+                for (final Count c : shown(site.next(), Listing.BELOW_SHOWN)) {
+                    sb.append(String.format(Locale.ROOT, "%24d    %s\n", c.count(), c.name()));
                 }
-                if (under > 0) {
-                    sb.append(String.format(Locale.ROOT, "%24d    (%d more below)\n", under,
-                            site.next().size() - HotReport.NEXT_SHOWN));
+                if (site.next().size() > Listing.BELOW_SHOWN) {
+                    sb.append(String.format(Locale.ROOT, "%24d    (%d more below)\n",
+                            Listing.rest(site.next(), Listing.BELOW_SHOWN, Count::count),
+                            site.next().size() - Listing.BELOW_SHOWN));
                 }
             }
-            if (rest > 0) {
-                sb.append(String.format(Locale.ROOT, "%17d  (%d more sites)\n", rest,
-                        g.sites().size() - HotReport.SITES_SHOWN));
+            if (g.sites().size() > sites) {
+                sb.append(String.format(Locale.ROOT, "%17d  (%s)\n",
+                        Listing.rest(g.sites(), sites, HotReport.Site::samples),
+                        Listing.more(g.sites().size() - sites, "sites", "--sites")));
             }
         }
         if (r.groups().size() > top) {
-            sb.append(String.format(Locale.ROOT, "  %d more families, --top to list them\n", r.groups().size() - top));
+            sb.append("  ").append(Listing.more(r.groups().size() - top, "families", "--top")).append('\n');
         }
 
         sb.append("\nLEAF METHODS\n");
         final TextTable leaves = new TextTable("Samples", "Share", "Method").numeric(0, 1);
-        for (final HotReport.Count c : shown(r.leaves(), top)) {
-            leaves.row(c.samples(), pct(r.share(c.samples())), c.frame());
+        for (final Count c : shown(r.leaves(), top)) {
+            leaves.row(c.count(), pct(r.share(c.count())), c.name());
         }
         sb.append(leaves.render("  "));
 
@@ -730,6 +738,104 @@ final class Text {
             timeline.row(cells.toArray());
         }
         sb.append(timeline.render("  "));
+        return sb.toString();
+    }
+
+    /** Example command lines are cut to this many characters; JSON has them whole. */
+    private static final int EXAMPLE_CHARS = 100;
+
+    static String procs(final ProcessReport r, final int top) {
+        final StringBuilder sb = new StringBuilder(header(r.info()));
+        if (r.starts() == 0) {
+            sb.append("\nNo process starts. jdk.ProcessStart is on in the 'default' and 'profile' settings; a "
+                    + "recording made with either started no process in its span.\n");
+            return sb.toString();
+        }
+        sb.append(String.format(Locale.ROOT, "%-10s %d started, %s per minute, %d command%s\n", "Processes",
+                r.starts(), r.perMinuteText(r.starts()), r.commands().size(), r.commands().size() == 1 ? "" : "s"));
+        sb.append(wrap("a command is the basename of the command line's first word; a site is " + r.siteKey(),
+                String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
+
+        sb.append("\nBY COMMAND\n");
+        for (final ProcessReport.Command c : shown(r.commands(), top)) {
+            sb.append(String.format(Locale.ROOT, "%8d %8s/min  %s\n", c.starts(), r.perMinuteText(c.starts()),
+                    c.command()));
+            sb.append("                    threads  ").append(Listing.listed(c.threads(), ProcessReport.SHOWN))
+                    .append('\n');
+            sb.append("                    sites    ").append(Listing.listed(c.sites(), ProcessReport.SHOWN))
+                    .append('\n');
+            final String example = c.example().length() > EXAMPLE_CHARS
+                    ? c.example().substring(0, EXAMPLE_CHARS - 1) + "…" : c.example();
+            sb.append("                    e.g.     ").append(example).append('\n');
+        }
+        if (r.commands().size() > top) {
+            sb.append("  ").append(Listing.more(r.commands().size() - top, "commands", "--top")).append('\n');
+        }
+
+        sb.append("\nBY THREAD FAMILY\n");
+        final TextTable families = new TextTable("Starts", "Per min", "Family", "Threads", "Commands")
+                .numeric(0, 1, 3);
+        for (final ProcessReport.Family f : shown(r.families(), top)) {
+            families.row(f.starts(), r.perMinuteText(f.starts()), f.name(),
+                    f.threads(), Listing.listed(f.commands(), ProcessReport.SHOWN));
+        }
+        sb.append(families.render("  "));
+        if (r.families().size() > top) {
+            sb.append("  ").append(Listing.more(r.families().size() - top, "families", "--top")).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** {@code sites}: the sites listed per class, {@code --sites}. */
+    static String waits(final WaitReport r, final int top, final int sites) {
+        final StringBuilder sb = new StringBuilder(header(r.info()));
+        sb.append(settingsLine(r.info(), "Thresholds", "jdk.JavaMonitorWait", "jdk.ThreadPark"));
+        if (r.waits() == 0) {
+            sb.append("\nNo waits match. jdk.JavaMonitorWait and jdk.ThreadPark are on in the 'default' and "
+                    + "'profile' settings, for waits above the thresholds; check --thread and --monitor against "
+                    + "'jfrq info'.\n");
+            return sb.toString();
+        }
+        sb.append(String.format(Locale.ROOT, "%-10s %s\n", "Waited", r.summary()));
+        if (r.clipped() > 0) {
+            sb.append(String.format(Locale.ROOT, "%-10s %s\n", "Note", r.clippedNote()));
+        }
+        sb.append(wrap(Listing.sites(r.siteKey()), String.format(Locale.ROOT, "%-10s ", "Sites"), " ".repeat(11)));
+
+        sb.append("\nBY CLASS WAITED ON (wait: Object.wait on the monitor's class; park: LockSupport.park on the "
+                + "blocker's)\n");
+        int n = 1;
+        for (final WaitReport.Monitor m : shown(r.classes(), top)) {
+            sb.append(String.format(Locale.ROOT, "  %2d  %-4s  %s  %s across %d wait%s, longest %s\n", n++,
+                    m.kind().label(), ClassNames.pretty(m.className()), Durations.format(m.totalNanos()), m.waits(),
+                    m.waits() == 1 ? "" : "s", Durations.format(m.maxNanos())));
+            for (final WaitReport.Site site : shown(m.sites(), sites)) {
+                sb.append(String.format(Locale.ROOT, "%18s %7d  %s\n", Durations.format(site.totalNanos()),
+                        site.waits(), site.frame()));
+                if (site.below().size() == 1 && site.below().getFirst().frame().equals(SiteKey.AT_SITE)) {
+                    continue;
+                }
+                for (final WaitReport.Below b : shown(site.below(), Listing.BELOW_SHOWN)) {
+                    sb.append(String.format(Locale.ROOT, "%26s %7d    %s\n", Durations.format(b.totalNanos()),
+                            b.waits(), b.frame()));
+                }
+                if (site.below().size() > Listing.BELOW_SHOWN) {
+                    final List<WaitReport.Below> rest = site.below().subList(Listing.BELOW_SHOWN, site.below().size());
+                    sb.append(String.format(Locale.ROOT, "%26s %7d    (%d more below)\n",
+                            Durations.format(Listing.sum(rest, WaitReport.Below::totalNanos)),
+                            Listing.sum(rest, WaitReport.Below::waits), rest.size()));
+                }
+            }
+            if (m.sites().size() > sites) {
+                sb.append(String.format(Locale.ROOT, "%18s %7d  (%s)\n",
+                        Durations.format(Listing.rest(m.sites(), sites, WaitReport.Site::totalNanos)),
+                        Listing.rest(m.sites(), sites, WaitReport.Site::waits),
+                        Listing.more(m.sites().size() - sites, "sites", "--sites")));
+            }
+        }
+        if (r.classes().size() > top) {
+            sb.append("  ").append(Listing.more(r.classes().size() - top, "classes", "--top")).append('\n');
+        }
         return sb.toString();
     }
 
@@ -897,6 +1003,12 @@ final class Text {
             sb.append(String.format(Locale.ROOT, "  %2d  %-22s %s  %8s  %-15s %s%s\n", row, s.thread().name(),
                     Durations.at(s.start(), r.info().startNanos()), Durations.format(s.duration()),
                     s.verdict(), s.detail(), evidence(s)));
+            if (!s.meanwhile().isEmpty()) {
+                sb.append("        ").append(Meanwhile.LABEL).append(":\n");
+                for (final Meanwhile m : s.meanwhile()) {
+                    sb.append("          ").append(m.describe()).append('\n');
+                }
+            }
             final String stack = s.stack().pretty("        ", STACK_FRAMES);
             if (stack.isEmpty()) {
                 continue;

@@ -41,6 +41,11 @@ frame below the site is JDK code, the frame the site called says what it asked t
 not in the stack (a frame carries a method, not its receiver), so a class name is the
 closest the recording can come.
 
+**How many sites.** Text and HTML list four sites per family by default and sum the rest
+on one line that names `--sites N`; on `d-2059.jfr` with `--app dev.marregui`, 764 of the
+EDT's 1,808 samples were on that line, in 257 more sites, and 601 in 253 with `--sites 8`.
+JSON lists `--top` of them, as it does every list. `waits` splits its sites by the same frame-below rule (`SiteKey.below`).
+
 **Cost.** The read keeps, per family, a count per distinct stack (stacks are interned, so
 the key is compared by identity first) and each sample's time; the site, the frame below it
 and the leaf are resolved once per distinct stack in `finish()`. On `d-2059.jfr` (30 min,

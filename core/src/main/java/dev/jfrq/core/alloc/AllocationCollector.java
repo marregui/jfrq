@@ -13,6 +13,7 @@ import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.coll.ObjHashSet;
 import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.Events;
 import dev.jfrq.core.jfr.Fields;
@@ -256,7 +257,8 @@ public final class AllocationCollector implements JfrReader.Sink {
         report = new AllocationReport(info, source, chosen.total, chosen.samples, chosen.events, counted,
                 toMap(chosen.byThread), toMap(chosen.byClass), toMap(chosen.bySite), toMaps(chosen.classByThread),
                 toMaps(chosen.siteByThread), new AllocationReport.Support(toMap(chosen.countByThread),
-                toMap(chosen.countByClass), toMap(chosen.countBySite)),
+                toMap(chosen.countByClass), toMap(chosen.countBySite), toMap(chosen.virtualBytesByThread),
+                toMap(chosen.virtualBytesByClass), toMap(chosen.virtualBytesBySite)),
                 new AllocationReport.Dropped(chosen.virtualFirsts, chosen.virtualFirstBytes),
                 new AllocationReport.Dropped(chosen.carrierHistories, chosen.carrierHistoryBytes), estimated);
     }
@@ -342,7 +344,6 @@ public final class AllocationCollector implements JfrReader.Sink {
     }
 
     private static final class Accumulator {
-        private static final String NO_THREAD = "<no thread>";
         private static final String NO_CLASS = "?";
         static final int HEAVY_KEPT = 256;
 
@@ -382,6 +383,14 @@ public final class AllocationCollector implements JfrReader.Sink {
         final ObjLongHashMap<String> countByThread = new ObjLongHashMap<>(64);
         final ObjLongHashMap<String> countByClass = new ObjLongHashMap<>(1024);
         final ObjLongHashMap<Stack> countBySite = new ObjLongHashMap<>(4096);
+        /**
+         * The bytes of the samples taken on virtual threads, per key: such a sample is weighed by its
+         * carrier, so that part of a row's bytes may not be its own. Kept only for events that carry
+         * that history ({@link #dropFirstPerThread}); a TLAB event is the TLAB's own size.
+         */
+        final ObjLongHashMap<String> virtualBytesByThread = new ObjLongHashMap<>(64);
+        final ObjLongHashMap<String> virtualBytesByClass = new ObjLongHashMap<>(256);
+        final ObjLongHashMap<Stack> virtualBytesBySite = new ObjLongHashMap<>(256);
         final ObjObjHashMap<String, ObjLongHashMap<String>> classByThread = new ObjObjHashMap<>(64);
         final ObjObjHashMap<String, ObjLongHashMap<Stack>> siteByThread = new ObjObjHashMap<>(64);
         /** Whether a thread's earliest sample is history from before the recording, to be dropped. */
@@ -440,10 +449,11 @@ public final class AllocationCollector implements JfrReader.Sink {
             if (bytes <= 0) {
                 return;
             }
-            final String threadName = thread == null ? NO_THREAD : thread.name();
+            final String threadName = thread == null ? Absent.NO_THREAD : thread.name();
             final String className = cls == null ? NO_CLASS : cls;
-            add(bytes, threadName, className, site);
-            if (thread != null && thread.isVirtual()) {
+            final boolean virtual = thread != null && thread.isVirtual();
+            add(bytes, threadName, className, site, virtual && dropFirstPerThread);
+            if (virtual) {
                 keepIfHeavy(thread, time, bytes, threadName, className, site);
             }
             if (thread != null) {
@@ -519,12 +529,13 @@ public final class AllocationCollector implements JfrReader.Sink {
                 }
                 carrierHistories++;
                 carrierHistoryBytes += h.bytes;
-                takeOut(h.threadName, h.cls, h.site, h.bytes);
+                takeOut(h.threadName, h.cls, h.site, h.bytes, true);
             }
             heavyCount = 0;
         }
 
-        private void add(final long bytes, final String threadName, final String cls, final Stack site) {
+        private void add(final long bytes, final String threadName, final String cls, final Stack site,
+                         final boolean virtual) {
             total += bytes;
             samples++;
             events++;
@@ -536,6 +547,11 @@ public final class AllocationCollector implements JfrReader.Sink {
             countBySite.increment(site, 1);
             perThread(classByThread, threadName).increment(cls, bytes);
             perThread(siteByThread, threadName).increment(site, bytes);
+            if (virtual) {
+                virtualBytesByThread.increment(threadName, bytes);
+                virtualBytesByClass.increment(cls, bytes);
+                virtualBytesBySite.increment(site, bytes);
+            }
         }
 
         private static <K> ObjLongHashMap<K> perThread(final ObjObjHashMap<String, ObjLongHashMap<K>> maps, final String thread) {
@@ -600,17 +616,19 @@ public final class AllocationCollector implements JfrReader.Sink {
                     continue;
                 }
                 final First f = firsts.valueAtSlot(s);
-                if (firsts.keyAtSlot(s).isVirtual()) {
+                final boolean virtual = firsts.keyAtSlot(s).isVirtual();
+                if (virtual) {
                     virtualFirsts++;
                     virtualFirstBytes += f.bytes;
                 }
-                takeOut(f.threadName, f.cls, f.site, f.bytes);
+                takeOut(f.threadName, f.cls, f.site, f.bytes, virtual);
             }
             firsts.clear();
         }
 
         /** Takes one sample back out of the totals and every breakdown. */
-        private void takeOut(final String threadName, final String cls, final Stack site, final long bytes) {
+        private void takeOut(final String threadName, final String cls, final Stack site, final long bytes,
+                             final boolean virtual) {
             total -= bytes;
             samples--;
             subtract(byThread, threadName, bytes);
@@ -619,6 +637,11 @@ public final class AllocationCollector implements JfrReader.Sink {
             subtract(countByThread, threadName, 1);
             subtract(countByClass, cls, 1);
             subtract(countBySite, site, 1);
+            if (virtual) {
+                subtract(virtualBytesByThread, threadName, bytes);
+                subtract(virtualBytesByClass, cls, bytes);
+                subtract(virtualBytesBySite, site, bytes);
+            }
             // Two threads can share a name (a pool that recycles them); the per-name maps may
             // already be gone after the first of them.
             subtract(classByThread.get(threadName), cls, bytes);

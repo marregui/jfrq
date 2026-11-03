@@ -40,9 +40,13 @@ JDK Mission Control shows the data; `jfr view` prints aggregate tables. Neither 
 | Why did the event loop stop at 14:03:07: a lock, a blocking socket or file call, a sleep, a GC pause, or CPU-bound code? | `jfrq stalls` |
 | Which locks did threads wait for, who held them, and which holders were themselves blocked (convoys)? | `jfrq locks` |
 | Where did the CPU go: which thread families, which of my methods, what below them, and when? | `jfrq hot` |
+| Which processes did the JVM start, how many a minute, from which threads and which of my methods? | `jfrq procs` |
+| What did a thread wait on in `Object.wait` or `park`, for how long, and from which code? | `jfrq waits` |
 | Which threads, classes and sites allocate, in bytes per second, and what changed since the recording before the fix? | `jfrq alloc` |
 | What did the JVM report about itself that points at trouble: failed evacuations, full GCs, heap floors that climb, throwables by site? | `jfrq health` |
 | What is in the file: span, threads and their CPU, event counts, and the thresholds that limit what it can show? | `jfrq info` |
+
+![Each command, the question it answers and the JFR events it reads; jfrq-live asks the same questions of a running JVM, once or for hours with watch](docs/images/questions.svg)
 
 - **One pass over the file.** A 40 MB recording is answered in about 0.25 s.
 - **No dependencies** beyond the JDK.
@@ -66,12 +70,12 @@ Install (JDK 25 to run): download `jfrq-<version>.zip` from the
 `bin/` on the `PATH`. It holds both commands, `jfrq` and `jfrq-live`:
 
 ```
-unzip jfrq-0.1.0.zip
-export PATH="$PWD/jfrq-0.1.0/bin:$PATH"
+unzip jfrq-0.2.0.zip
+export PATH="$PWD/jfrq-0.2.0/bin:$PATH"
 ```
 
 The release's `SHA256SUMS` lists each zip's checksum, and
-`gh attestation verify jfrq-0.1.0.zip --repo marregui/jfrq` checks that the zip was built
+`gh attestation verify jfrq-0.2.0.zip --repo marregui/jfrq` checks that the zip was built
 by this repository's release workflow.
 
 Or build it (JDK 25):
@@ -92,8 +96,9 @@ jfrq locks  demo-lock.jfr --html locks.html
 ```
 
 Then on your own service. Recordings from any JDK 17+ JVM are read; the
-[recommended settings](docs/RECORDING.md#2-the-recommended-settings) also record waits
-down to 1 ms, where the JDK's own settings stop at 10 ms (`profile`) or 20 ms (`default`):
+[recommended settings](docs/RECORDING.md#2-the-recommended-settings) also record monitor
+enters, parks, sleeps and blocking I/O down to 1 ms, where the JDK's own settings stop at
+10 ms (`profile`) or 20 ms (`default`):
 
 ```
 java -XX:StartFlightRecording=filename=app.jfr,settings=profile -jar app.jar
@@ -107,6 +112,7 @@ asks the question of that, and a `delta` holds only what happened since the last
 ```
 jfrq-live 4242 start --max-age 10m
 jfrq-live 4242 delta -- stalls --thread 'event-loop-*'
+jfrq-live 4242 watch --every 30m --for 2h --histo --ask health   # a window every 30 minutes, then a summary
 ```
 
 ## Documentation
@@ -118,13 +124,13 @@ The index is [docs/README.md](docs/README.md).
 | [TUTORIAL.md](docs/TUTORIAL.md) | Four injected event-loop pathologies, recorded and diagnosed step by step (about fifteen minutes) |
 | [USAGE.md](docs/USAGE.md) | Every command and option, output rules, exit status |
 | [RECORDING.md](docs/RECORDING.md) | What JFR records, and the settings that give `jfrq` a complete answer |
-| [LIVE.md](docs/LIVE.md) | `jfrq-live`: dumps, the cursor, deltas, bounds |
+| [LIVE.md](docs/LIVE.md) | `jfrq-live`: dumps, the cursor, deltas, bounds; `watch`, `histo` and `growth` |
 | [JSON.md](docs/JSON.md) | The `--json` schema |
 | [design/](docs/design/README.md) | The overall design, with one document per command: how each detector works, the JFR events it reads, and what it cannot see |
 
 ## Status
 
-The latest release is 0.1.0. The command-line interface and the report layouts may change. The verdicts and
+The latest release is 0.2.0. The command-line interface and the report layouts may change. The verdicts and
 the numbers behind them are tested against synthetic timelines and against real
 recordings made in the test suite.
 

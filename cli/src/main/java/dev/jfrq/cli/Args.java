@@ -12,6 +12,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import dev.jfrq.core.util.Durations;
+import dev.jfrq.core.util.Glob;
 
 /**
  * Command-line arguments: positionals plus {@code --name value} / {@code --name=value}
@@ -106,19 +107,40 @@ public final class Args {
 
     /** {@code --top N}: rows per table, a positive number, 15 by default. */
     public int top() {
-        final String v = options.get("top");
+        return positive("top", 15);
+    }
+
+    /** {@code --<name> N}: a positive number, {@code fallback} when the option is not given. */
+    public int positive(final String name, final int fallback) {
+        final String v = options.get(name);
         if (v == null) {
-            return 15;
+            return fallback;
         }
         try {
             final int n = Integer.parseInt(v);
             if (n <= 0) {
-                throw new UsageException("--top must be positive");
+                throw new UsageException("--" + name + " must be positive");
             }
             return n;
         } catch (final NumberFormatException e) {
-            throw new UsageException("--top is not a number: " + v);
+            throw new UsageException("--" + name + " is not a number: " + v);
         }
+    }
+
+    /**
+     * {@code --<name> GLOB}: the comma-separated patterns, empty when the option is not given; a
+     * value that names no pattern ({@code ","}) is a usage error rather than a filter that matches nothing.
+     */
+    public Optional<Glob> globs(final String name) {
+        final String v = options.get(name);
+        if (v == null) {
+            return Optional.empty();
+        }
+        final Glob glob = Glob.of(v);
+        if (glob.isEmpty()) {
+            throw new UsageException("--" + name + " must name at least one pattern");
+        }
+        return Optional.of(glob);
     }
 
     public long durationOption(final String name, final String fallback, final boolean zeroAllowed) {

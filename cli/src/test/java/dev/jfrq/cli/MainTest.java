@@ -32,13 +32,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.jfrq.core.jfr.JfrReader;
+import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.report.Html;
+import dev.jfrq.core.report.Json;
 import dev.jfrq.core.report.JsonParser;
+import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Stall;
+import dev.jfrq.core.stalls.StallReport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -48,7 +53,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Runs every command against one small recording made once for the class: a named loop
- * thread that idles, sleeps, burns CPU and blocks on a monitor, plus an allocating thread.
+ * thread that idles, sleeps, burns CPU and blocks on a monitor, plus an allocating thread,
+ * and a thread that waits on a monitor and starts one process.
  */
 class MainTest {
 
@@ -66,6 +72,53 @@ class MainTest {
         }
     }
 
+    /** Two places to spin in, so {@code waits-cli} has two sites for {@code hot --sites}. */
+    static final class Burn {
+        // Each spins in its own body: a shared helper would be the one innermost frame of both.
+        static void first() {
+            final long deadline = System.nanoTime() + 150 * 1_000_000L;
+            while (System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+        }
+
+        static void second() {
+            final long deadline = System.nanoTime() + 150 * 1_000_000L;
+            while (System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+        }
+    }
+
+    /** The class of the monitor {@code waits-cli} waits on, so a {@code --monitor} glob can name it. */
+    static final class Flusher {
+    }
+
+    /**
+     * Spins in two methods, waits on a {@link Flusher} until it times out, then starts {@code java -version}
+     * and waits for it.
+     */
+    static void waitAndStart(final Queue<String> stuck) {
+        Burn.first();
+        Burn.second();
+        final Flusher flusher = new Flusher();
+        try {
+            synchronized (flusher) {
+                flusher.wait(30);
+            }
+            final Process p = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-version").redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            if (!p.waitFor(60, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                stuck.add("java -version never finished");
+            }
+        } catch (final IOException e) {
+            stuck.add("cannot start java -version: " + e);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     @BeforeAll
     static void record() throws Exception {
         recording = dir.resolve("cli.jfr");
@@ -80,6 +133,8 @@ class MainTest {
             r.enable("jdk.ThreadSleep").withThreshold(Duration.ZERO).withStackTrace();
             r.enable("jdk.JavaMonitorEnter").withThreshold(Duration.ZERO).withStackTrace();
             r.enable("jdk.ThreadPark").withThreshold(Duration.ZERO).withStackTrace();
+            r.enable("jdk.JavaMonitorWait").withThreshold(Duration.ZERO).withStackTrace();
+            r.enable("jdk.ProcessStart").withStackTrace();
             r.enable("jdk.ObjectAllocationSample").with("throttle", "2000/s").withStackTrace();
             // For health.
             r.enable("jdk.GarbageCollection");
@@ -142,6 +197,11 @@ class MainTest {
             assertFalse(loop.isAlive(), "loop-cli never finished");
             allocator.join(Duration.ofSeconds(60));
             assertFalse(allocator.isAlive(), "alloc-cli never finished");
+            // For waits and procs, after the loop so its stalls are what they were.
+            final Thread waiter = new Thread(() -> waitAndStart(stuck), "waits-cli");
+            waiter.start();
+            waiter.join(Duration.ofSeconds(90));
+            assertFalse(waiter.isAlive(), "waits-cli never finished");
             assertTrue(stuck.isEmpty(), stuck.toString());
             // For health, once the threads the other commands judge are done: a collection a
             // heap this size would not otherwise need, and one throwable made at a known site.
@@ -551,6 +611,107 @@ class MainTest {
         assertEquals(2, run("hot", recording.toString(), "--bucket", "0s").status());
         assertEquals(2, run("hot", recording.toString(), "--bucket", "infinity").status());
         assertEquals(2, run("hot", recording.toString(), "--sites").status());
+        assertEquals(2, run("hot", recording.toString(), "--sites", "0").status());
+        assertEquals(2, run("hot", recording.toString(), "--sites", "x").status());
+    }
+
+    /// `hot --sites N` lists at most N sites per family, and the line that sums the rest names the option.
+    @Test
+    void hotSitesListsThatManySitesPerFamily() {
+        final Run all = run("hot", recording.toString(), "--sites", "1000");
+        assertEquals(0, all.status(), all.err());
+        final Run one = run("hot", recording.toString(), "--sites", "1");
+        assertEquals(0, one.status(), one.err());
+        // waits-cli spun in two methods: one listed, the other summed on a line that names the option.
+        assertTrue(families(all.out()).contains("waits-cli"), all.out());
+        assertEquals(families(one.out()).size(), siteLines(one.out()), one.out());
+        assertTrue(siteLines(all.out()) > siteLines(one.out()), all.out());
+        assertTrue(one.out().contains(" more sites, --sites to list them)"), one.out());
+        assertFalse(all.out().contains(" more sites"), all.out());
+    }
+
+    /** The family table of {@code hot}'s text. */
+    private static String familyTable(final String text) {
+        return text.substring(text.indexOf("BY THREAD FAMILY"), text.indexOf("LEAF METHODS"));
+    }
+
+    /** The families of {@code hot}'s family table, by their rows: a count, a share, the name. */
+    private static List<String> families(final String text) {
+        return familyTable(text).lines().filter(l -> l.matches(" {0,7}\\d+ +\\d+\\.\\d%  .*"))
+                .map(l -> l.substring(l.indexOf("%  ") + 3)).toList();
+    }
+
+    /** The site rows of {@code hot}'s family table, counted by their indent: a count right-aligned to column 17. */
+    private static long siteLines(final String text) {
+        return familyTable(text).lines().filter(l -> l.matches(" {11,16}\\d+  [^(].*")).count();
+    }
+
+    /// `procs` counts the fixture's process start by command and by the family of the thread that made it, in
+    /// text, JSON and HTML, and takes `--app` but not a foreign option.
+    @Test
+    void procs() throws Exception {
+        final Path html = dir.resolve("procs.html");
+        final Run r = run("procs", recording.toString(), "--app", "dev.jfrq", "--html", html.toString());
+        assertEquals(0, r.status(), r.err());
+        for (final String section : List.of("BY COMMAND", "BY THREAD FAMILY")) {
+            assertTrue(r.out().contains("\n" + section), section + " in " + r.out());
+        }
+        assertTrue(r.out().contains("waits-cli"), r.out());
+        assertTrue(r.out().contains("dev.jfrq.cli.MainTest.waitAndStart"), r.out());
+        assertTrue(Files.readString(html).contains("<title>jfrq procs"));
+
+        final Map<String, Object> doc = JsonParser.object(json("procs", recording.toString()));
+        assertEquals("procs", doc.get("command"));
+        assertTrue((Long) doc.get("processStarts") >= 1, doc.toString());
+        assertTrue(r.out().contains("Processes  " + doc.get("processStarts") + " started"), r.out() + doc);
+        final Map<String, Object> first = object(list(doc, "commands").getFirst());
+        assertTrue(((String) first.get("example")).endsWith(" -version"), first.toString());
+        assertTrue(list(doc, "families").stream().anyMatch(f -> "waits-cli".equals(object(f).get("family"))),
+                doc.toString());
+        assertEquals(2, run("procs", recording.toString(), "--thread", "x").status());
+    }
+
+    /// `waits` names the fixture's `Object.wait` by its monitor's class, under its site, with the thresholds;
+    /// `--thread` and `--monitor` narrow it, and a foreign option is a usage error.
+    @Test
+    void waits() throws Exception {
+        final Path html = dir.resolve("waits.html");
+        final Run r = run("waits", recording.toString(), "--thread", "waits-*", "--monitor", "*MainTest$Flusher",
+                "--app", "dev.jfrq", "--html", html.toString());
+        assertEquals(0, r.status(), r.err());
+        assertTrue(r.out().contains("Thresholds JavaMonitorWait 0 ns"), r.out());
+        assertTrue(r.out().contains("  wait  dev.jfrq.cli.MainTest$Flusher  "), r.out());
+        assertTrue(r.out().contains("dev.jfrq.cli.MainTest.waitAndStart"), r.out());
+        assertTrue(Files.readString(html).contains("<title>jfrq waits"));
+
+        final Map<String, Object> doc = JsonParser.object(json("waits", recording.toString(), "--thread", "waits-*",
+                "--monitor", "*Flusher"));
+        assertEquals(1L, doc.get("classesFound"), doc.toString());
+        final Map<String, Object> flusher = object(list(doc, "classes").getFirst());
+        assertEquals("WAIT", flusher.get("kind"));
+        assertFalse(flusher.containsKey("event"), flusher.toString());
+        assertEquals("dev.jfrq.cli.MainTest$Flusher", flusher.get("class"));
+        assertEquals(1L, flusher.get("waits"));
+        assertTrue((Long) flusher.get("totalNanos") > 0, flusher.toString());
+        assertEquals(0L, map(doc, "thresholdNanos").get("jdk.JavaMonitorWait"));
+
+        final Run none = run("waits", recording.toString(), "--thread", "nobody");
+        assertEquals(0, none.status(), none.err());
+        assertTrue(none.out().contains("No waits match."), none.out());
+        assertEquals(2, run("waits", recording.toString(), "--monitor", ",").status());
+        assertEquals(2, run("waits", recording.toString(), "--sites", "0").status());
+        assertEquals(2, run("waits", recording.toString(), "--bucket", "1s").status());
+    }
+
+    /// `waits` takes `--sites` as `hot` does: one listed site per class, the rest summed on a line naming the option.
+    @Test
+    void waitsTakesSites() {
+        final Run all = run("waits", recording.toString(), "--sites", "1000");
+        assertEquals(0, all.status(), all.err());
+        assertFalse(all.out().contains(" more sites"), all.out());
+        final Run one = run("waits", recording.toString(), "--sites", "1");
+        assertEquals(0, one.status(), one.err());
+        assertFalse(one.out().contains("--top to list them)"), one.out());
     }
 
     @Test
@@ -653,6 +814,48 @@ class MainTest {
         final Run defaults = run("stalls", recording.toString(), "--thread", "loop-cli");
         assertEquals(0, defaults.status());
         assertTrue(defaults.out().contains("Gap        50.0 ms"));
+    }
+
+    /// A stall on a lock nobody is recorded holding prints the threads seen meanwhile under its
+    /// row, labelled a correlation, in text, JSON and HTML alike.
+    @Test
+    void stallsNameWhoRanMeanwhileAsACorrelation() {
+        final RecordingInfo info = new RecordingInfo(Path.of("m.jfr"), new Interval(0, 10_000_000_000L), 1, Map.of(),
+                Map.of(), Set.of(), List.of());
+        final Meanwhile seen = new Meanwhile(new ThreadRef(2, "AppKit Thread"), 0, 7,
+                "sun.java2d.metal.MTLLayer.blitTexture", 7, null);
+        final Stall park = new Stall(new ThreadRef(1, "AWT-EventQueue-0"), new Interval(1_000_000_000L, 2_010_000_000L),
+                Stall.Verdict.PARKED, "parked on java.util.concurrent.locks.ReentrantLock$NonfairSync@1", Stack.EMPTY,
+                Stall.Evidence.EVENT, 0, List.of(seen), Stall.LockHolder.UNRECORDED);
+        final StallReport r = new StallReport(info, 50_000_000L, List.of(), List.of(park), List.of(), List.of());
+        final String line = "AppKit Thread: 7 native samples, all in sun.java2d.metal.MTLLayer.blitTexture";
+
+        final String text = Text.stalls(r, 10);
+        final String block = "ReentrantLock$NonfairSync@1\n        " + Meanwhile.LABEL + ":\n          " + line + "\n";
+        assertTrue(text.contains(block), text);
+
+        final Map<String, Object> json = JsonParser.object(Json.stalls(r, 10, "test"));
+        final Map<?, ?> stall = (Map<?, ?>) ((List<?>) json.get("stalls")).getFirst();
+        assertEquals("UNRECORDED", stall.get("holder"));
+        final Map<?, ?> meanwhile = (Map<?, ?>) ((List<?>) stall.get("meanwhile")).getFirst();
+        assertEquals("AppKit Thread", meanwhile.get("thread"));
+        assertEquals(0L, meanwhile.get("javaSamples"));
+        assertEquals(7L, meanwhile.get("nativeSamples"));
+        assertEquals("sun.java2d.metal.MTLLayer.blitTexture", meanwhile.get("frame"));
+        assertEquals(7L, meanwhile.get("frameSamples"));
+        assertTrue(meanwhile.containsKey("site") && meanwhile.get("site") == null, meanwhile.toString());
+
+        final String html = Html.stalls(r, 10);
+        assertTrue(html.contains(Meanwhile.LABEL + ":\n  " + line), html);
+
+        // A stall with nobody seen meanwhile has no line and an empty list.
+        final StallReport plain = new StallReport(info, 50_000_000L, List.of(),
+                List.of(park.withMeanwhile(List.of())), List.of(), List.of());
+        assertFalse(Text.stalls(plain, 10).contains(Meanwhile.LABEL));
+        assertFalse(Html.stalls(plain, 10).contains(Meanwhile.LABEL));
+        final Map<?, ?> none = (Map<?, ?>) ((List<?>) JsonParser.object(Json.stalls(plain, 10, "test")).get("stalls"))
+                .getFirst();
+        assertEquals(List.of(), none.get("meanwhile"));
     }
 
     /** A recording of three threads one spawner starts, with their starts and CPU readings. */

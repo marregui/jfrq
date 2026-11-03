@@ -18,9 +18,9 @@ import java.util.function.Predicate;
 
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.ObjList;
-import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
 import dev.jfrq.core.jfr.RecordingInfo;
+import dev.jfrq.core.jfr.ThreadFilter;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
@@ -116,8 +116,6 @@ public final class ContentionReport {
     public static final int SITE_FRAMES = 6;
 
     private static final Comparator<Wait> BY_INTERVAL = Comparator.comparing(Wait::interval);
-    private static final long PASSES = 1;
-    private static final long FAILS = 0;
     /** How the holder walk reads a wait: a lock is its class and address. */
     private static final Holders.Access<Wait> WAITS = new Holders.Access<>() {
         @Override
@@ -237,7 +235,7 @@ public final class ContentionReport {
         }
         holders.seal();
         // The filter runs once per thread, not once per wait (G-2.2).
-        final ObjLongHashMap<ThreadRef> filterVerdict = new ObjLongHashMap<>(256);
+        final ThreadFilter waiterVerdicts = new ThreadFilter(waiterFilter);
         final ObjList<Wait> reported = new ObjList<>(sorted.size());
         final ObjList<Wait> idling = new ObjList<>();
         final Interval window = info.span();
@@ -320,7 +318,7 @@ public final class ContentionReport {
                 continue;
             }
             if (!lockFilter.test(w.lock()) || inside.duration() < minNanos
-                    || !passes(filterVerdict, waiterFilter, w.waiter())) {
+                    || !waiterVerdicts.passes(w.waiter())) {
                 filteredOut++;
                 continue;
             }
@@ -441,16 +439,6 @@ public final class ContentionReport {
     private static Waits waitsOf(final ObjObjHashMap<ThreadRef, Waits> map, final ThreadRef thread) {
         final int index = map.keyIndex(thread);
         return index < 0 ? map.valueAtQuick(index) : map.putAt(index, thread, new Waits());
-    }
-
-    private static boolean passes(final ObjLongHashMap<ThreadRef> verdicts, final Predicate<String> filter, final ThreadRef thread) {
-        final int index = verdicts.keyIndex(thread);
-        if (index < 0) {
-            return verdicts.valueAtQuick(index) == PASSES;
-        }
-        final boolean passes = filter.test(thread.name());
-        verdicts.putAt(index, thread, passes ? PASSES : FAILS);
-        return passes;
     }
 
     /**
