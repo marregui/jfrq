@@ -172,6 +172,23 @@ class HistogramTest {
         assertTrue(LiveTest.run("growth", "--help").out().contains("growth H1 H2"));
     }
 
+    /// The GC's heap filler grows with the GC's work, not the program's: it is left out of both tables, and said so.
+    @Test
+    void theGcsHeapFillerIsLeftOut() throws IOException {
+        final Histogram start = Histogram.parse("""
+                   1:   10   1000  [Ljdk.internal.vm.FillerElement; (java.base@25)
+                   2:   10    100  a.B
+                """, "inline");
+        final Histogram end = Histogram.parse("""
+                   1:   99  90000  [Ljdk.internal.vm.FillerElement; (java.base@25)
+                   2:   20    200  a.B
+                """, "inline");
+        assertEquals(List.of("a.B"), Histogram.growers(List.of(start, end)).stream().map(Histogram.Grower::name)
+                .toList());
+        final String table = Histogram.table(List.of("s", "e"), List.of(start, end), 5);
+        assertTrue(table.contains("Left out   [Ljdk.internal.vm.FillerElement;: the GC's heap filler"), table);
+    }
+
     private static List<Histogram> threeSteps() throws IOException {
         return List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE"), Histogram.parse(END, "END"));
     }

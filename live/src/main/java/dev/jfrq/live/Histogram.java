@@ -138,6 +138,13 @@ record Histogram(Map<String, long[]> classes) {
         return bytesOnly;
     }
 
+    /**
+     * The classes the GC fills unused heap with ({@code CollectedHeap::fill_with_object} in
+     * HotSpot): not application objects, and their bytes move with the GC's work, not the
+     * program's. A quiet watch saw {@code [Ljdk.internal.vm.FillerElement;} as its top grower.
+     */
+    static final Set<String> GC_FILLERS = Set.of("[Ljdk.internal.vm.FillerElement;", "jdk.internal.vm.FillerObject");
+
     /** Every class whose bytes grew at every step, ranked by byte growth first to last, then by name. */
     private static List<Grower> byteGrowth(final List<Histogram> histograms) {
         if (histograms.size() < 2) {
@@ -149,6 +156,7 @@ record Histogram(Map<String, long[]> classes) {
         }
         final List<Grower> grew = new ArrayList<>();
         final int n = histograms.size();
+        names.removeAll(GC_FILLERS);
         for (final String name : names) {
             final long[] instances = new long[n];
             final long[] bytes = new long[n];
@@ -187,6 +195,11 @@ record Histogram(Map<String, long[]> classes) {
                 + "histogram to the next%s\n", growers.size(), all.size(),
                 growers.size() > top ? " (top " + top + " by bytes)" : ""));
         rows(sb, growers, top);
+        for (final String filler : GC_FILLERS) {
+            if (all.contains(filler)) {
+                sb.append("Left out   ").append(filler).append(": the GC's heap filler, not application objects\n");
+            }
+        }
         sb.append("\nBYTES GREW AT EVERY STEP (instances did not): larger arrays or buffers, not more objects\n");
         sb.append(String.format(Locale.ROOT, "Bytes only %,d of %,d classes%s\n", bytesOnly.size(), all.size(),
                 bytesOnly.size() > top ? " (top " + top + " by bytes)" : ""));

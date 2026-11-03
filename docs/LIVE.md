@@ -320,7 +320,9 @@ and bytes in every file (`--top N` rows each, default 15):
    first.
 
 A class absent from a histogram counts as 0 there; rows of one class name are added
-together. With two histograms, a step is the pair. Growth at every step, not first to
+together. The GC's heap filler (`[Ljdk.internal.vm.FillerElement;`,
+`jdk.internal.vm.FillerObject`) is left out of both tables, with a line that says so: its
+bytes follow the GC's work, not the program's, and a quiet watch saw it as the top grower. With two histograms, a step is the pair. Growth at every step, not first to
 last, keeps out a class whose count or size went up and down and ended higher. The
 histograms `watch --histo` takes are each after a full GC, so a class that grows at every
 step grows in what is reachable.
