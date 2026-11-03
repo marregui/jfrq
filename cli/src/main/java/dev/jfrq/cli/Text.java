@@ -366,7 +366,7 @@ final class Text {
             }
             threads.row(row.key(), Bytes.format(row.bytes()), r.counted(row.key()).map(Bytes::format).orElse(""),
                     Bytes.rate(r.rate(row.bytes())), pct(row.share()), AllocationReport.Support.withVirtual(
-                    r.support().thread(row.key()), r.support().virtualThread(row.key())), classes);
+                    r.support().thread(row.key()), row.bytes(), r.support().virtualBytesOfThread(row.key())), classes);
         }
         sb.append(threads.render("  "));
 
@@ -375,7 +375,7 @@ final class Text {
         for (final AllocationReport.Row<String> row : r.classes(top)) {
             classes.row(ClassNames.pretty(row.key()), Bytes.format(row.bytes()), Bytes.rate(r.rate(row.bytes())),
                     pct(row.share()), AllocationReport.Support.withVirtual(r.support().className(row.key()),
-                    r.support().virtualClassName(row.key())));
+                    row.bytes(), r.support().virtualBytesOfClass(row.key())));
         }
         sb.append(classes.render("  "));
 
@@ -387,7 +387,7 @@ final class Text {
                 sb.append(String.format(Locale.ROOT, "  %2d  %10s  %10s  %6s  %d sample%s%s  %s%s\n", n++,
                         Bytes.format(row.bytes()), Bytes.rate(r.rate(row.bytes())), pct(row.share()),
                         row.samples(), row.samples() == 1 ? "" : "s",
-                        AllocationReport.Support.virtualNote(row.samples(), row.virtualSamples()), row.label(),
+                        AllocationReport.Support.virtualNote(row.bytes(), row.virtualBytes()), row.label(),
                         row.stacks() > 1 ? "  (" + row.stacks() + " stacks, the biggest below)" : ""));
                 sb.append(row.stack().pretty("        ", STACK_FRAMES));
             }

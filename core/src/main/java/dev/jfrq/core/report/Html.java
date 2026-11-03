@@ -595,7 +595,8 @@ public final class Html {
             }
             p.row(r.key(), Bytes.format(r.bytes()), report.counted(r.key()).map(Bytes::format).orElse(""),
                     Bytes.rate(report.rate(r.bytes())), pct(r.share()), AllocationReport.Support.withVirtual(
-                    report.support().thread(r.key()), report.support().virtualThread(r.key())), classes);
+                    report.support().thread(r.key()), r.bytes(), report.support().virtualBytesOfThread(r.key())),
+                    classes);
         }
         p.tableEnd();
 
@@ -604,7 +605,7 @@ public final class Html {
         for (final AllocationReport.Row<String> r : report.classes(top)) {
             p.row(ClassNames.pretty(r.key()), Bytes.format(r.bytes()), Bytes.rate(report.rate(r.bytes())),
                     pct(r.share()), AllocationReport.Support.withVirtual(report.support().className(r.key()),
-                    report.support().virtualClassName(r.key())));
+                    r.bytes(), report.support().virtualBytesOfClass(r.key())));
         }
         p.tableEnd();
 
@@ -624,7 +625,7 @@ public final class Html {
         for (final AllocationReport.SiteRow r : report.sites(key, top)) {
             p.row(r.label() + (r.stacks() > 1 ? " (" + r.stacks() + " stacks, the biggest below)" : ""),
                     Bytes.format(r.bytes()), Bytes.rate(report.rate(r.bytes())), pct(r.share()),
-                    AllocationReport.Support.withVirtual(r.samples(), r.virtualSamples()));
+                    AllocationReport.Support.withVirtual(r.samples(), r.bytes(), r.virtualBytes()));
             p.stackRow(5, r.stack());
         }
         p.tableEnd();

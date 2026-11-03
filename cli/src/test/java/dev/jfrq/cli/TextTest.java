@@ -418,6 +418,16 @@ class TextTest {
 
         final String sites = section(Text.alloc(r, 15, true, SiteKey.culpritMethod()), "BY SITE");
         assertTrue(sites.contains("1200 samples  dev.app.NodeId.parse  (2 stacks, the biggest below)"), sites);
+        // A row whose bytes partly came from virtual-thread samples says what share, in bytes.
+        final AllocationReport v = new AllocationReport(window(), "jdk.ObjectAllocationSample", 1000, 1200, 1200,
+                Map.of(), Map.of("worker", 1000L), Map.of(), Map.of(viaSubstring, 700L, viaCopy, 300L),
+                Map.of(), Map.of(), new AllocationReport.Support(Map.of("worker", 1200L), Map.of(),
+                Map.of(viaSubstring, 900L, viaCopy, 300L), Map.of("worker", 1000L), Map.of(), Map.of(viaCopy, 300L)));
+        final String marked = Text.alloc(v, 15, true, SiteKey.culpritMethod());
+        assertTrue(section(marked, "BY SITE").contains("1200 samples (30% virtual)  dev.app.NodeId.parse"), marked);
+        assertTrue(section(marked, "BY THREAD").contains("1200 (all virtual)"), marked);
+        assertTrue(Html.alloc(v, 15, true, SiteKey.culpritMethod()).contains("1200 (30% virtual)"));
+        assertTrue(Json.alloc(v, 15, true, SiteKey.culpritMethod(), "test").contains("\"virtualBytes\":300"));
         assertEquals(1, occurrences(sites, "dev.app.NodeId.parse "), sites);
         // The line that tells a reader what --app could be pointed at.
         assertTrue(sites.contains("Packages dev.app 100.0%  (--app PREFIX"), sites);

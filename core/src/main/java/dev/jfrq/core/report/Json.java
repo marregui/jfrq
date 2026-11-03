@@ -737,7 +737,7 @@ public final class Json {
             w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
             w.name("share").value(row.share());
             w.name("samples").value(r.support().thread(row.key()));
-            w.name("virtualSamples").value(r.support().virtualThread(row.key()));
+            w.name("virtualBytes").value(r.support().virtualBytesOfThread(row.key()));
             w.name("topClasses").array();
             for (final AllocationReport.Row<String> c : r.classesOf(row.key(), 3)) {
                 w.object();
@@ -759,7 +759,7 @@ public final class Json {
             w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
             w.name("share").value(row.share());
             w.name("samples").value(r.support().className(row.key()));
-            w.name("virtualSamples").value(r.support().virtualClassName(row.key()));
+            w.name("virtualBytes").value(r.support().virtualBytesOfClass(row.key()));
             w.end();
         }
         w.end();
@@ -785,7 +785,7 @@ public final class Json {
                 w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
                 w.name("share").value(row.share());
                 w.name("samples").value(row.samples());
-                w.name("virtualSamples").value(row.virtualSamples());
+                w.name("virtualBytes").value(row.virtualBytes());
                 w.name("stacks").value(row.stacks());
                 stack(w, row.stack());
                 w.end();

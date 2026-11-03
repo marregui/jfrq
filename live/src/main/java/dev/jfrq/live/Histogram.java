@@ -143,7 +143,8 @@ record Histogram(Map<String, long[]> classes) {
      * HotSpot): not application objects, and their bytes move with the GC's work, not the
      * program's. A quiet watch saw {@code [Ljdk.internal.vm.FillerElement;} as its top grower.
      */
-    static final Set<String> GC_FILLERS = Set.of("[Ljdk.internal.vm.FillerElement;", "jdk.internal.vm.FillerObject");
+    static final List<String> GC_FILLERS = List.of("[Ljdk.internal.vm.FillerElement;",
+            "jdk.internal.vm.FillerObject");
 
     /** Every class whose bytes grew at every step, ranked by byte growth first to last, then by name. */
     private static List<Grower> byteGrowth(final List<Histogram> histograms) {

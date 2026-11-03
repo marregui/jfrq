@@ -169,9 +169,9 @@ Every list is cut to `--top`.
 | `estimatedBytes`, `bytesPerSecond` | the estimate |
 | `counted` | whether the JVM's own per-thread counters were in the file; when they were: `countedBytes`, `countedThreads`, `estimatedOnCountedThreads`, `estimateError`, over the threads with a counter; `estimatedOnCountedThreads` is their estimate over the stretch each counter covers, from its first reading (or the thread's start) to its last, so the two compare like for like. A `threads[]` row's `countedBytes` is `null` unless that stretch holds 95 % of the row's `bytes` |
 | `threadsFound`, `classesFound`, `packagesFound`, `sitesFound` | how many rows each list had before `--top` (the last two with `--sites`) |
-| `threads[]` | `thread`, `bytes`, `countedBytes`, `bytesPerSecond`, `share`, `samples`, `virtualSamples` (of `samples`, those taken on virtual threads, each weighed by its carrier's allocation, so a row resting on them can be far from its own), `topClasses[]` (`class`, `bytes`) |
-| `classes[]` | `class` (the JVM name, `[B` for `byte[]`), `bytes`, `bytesPerSecond`, `share`, `samples`, `virtualSamples` |
-| `siteKey`, `packages[]`, `sites[]` | with `--sites`: how sites are keyed, the package roots seen (`package`, `share`), and `site`, `bytes`, `bytesPerSecond`, `share`, `samples`, `virtualSamples`, `stacks`, `stack` |
+| `threads[]` | `thread`, `bytes`, `countedBytes`, `bytesPerSecond`, `share`, `samples`, `virtualBytes` (of `bytes`, those from samples taken on virtual threads, each weighed by its carrier's allocation, so that part of the row can be far from its own code's; 0 for TLAB events, which carry no carrier history), `topClasses[]` (`class`, `bytes`) |
+| `classes[]` | `class` (the JVM name, `[B` for `byte[]`), `bytes`, `bytesPerSecond`, `share`, `samples`, `virtualBytes` |
+| `siteKey`, `packages[]`, `sites[]` | with `--sites`: how sites are keyed, the package roots seen (`package`, `share`), and `site`, `bytes`, `bytesPerSecond`, `share`, `samples`, `virtualBytes`, `stacks`, `stack` |
 
 With `--baseline`, `recording` is the current file and the document instead has
 `baseline` (its own `recording` object and the estimate fields above), `current` (the
