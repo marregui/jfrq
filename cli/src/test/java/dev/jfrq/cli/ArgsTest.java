@@ -79,4 +79,14 @@ class ArgsTest {
         // A value that looks like an option is still the value of the option before it.
         assertEquals("-1", parse("--top", "-1").option("top").orElseThrow());
     }
+
+    /// A glob option is absent, a set of patterns, or a usage error when its value names no pattern.
+    @Test
+    void globsNameAtLeastOnePattern() {
+        assertTrue(parse().globs("thread").isEmpty());
+        assertTrue(parse("--thread", "edt-*,pool-?").globs("thread").orElseThrow().test("pool-1"));
+        final Args.UsageException e = assertThrows(Args.UsageException.class,
+                () -> parse("--thread", ",").globs("thread"));
+        assertEquals("--thread must name at least one pattern", e.getMessage());
+    }
 }

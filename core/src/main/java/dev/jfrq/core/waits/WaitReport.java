@@ -8,9 +8,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-import dev.jfrq.core.alloc.SiteKey;
-import dev.jfrq.core.jfr.EventKinds;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.RecordingInfo;
+import dev.jfrq.core.model.SiteKey;
+import dev.jfrq.core.util.Durations;
 
 /**
  * What threads waited on, from their own side: {@code jdk.JavaMonitorWait} and
@@ -37,29 +38,25 @@ public record WaitReport(RecordingInfo info, String siteKey, long totalNanos, lo
         return names.size();
     }
 
-    /** Frames listed below each site by text and HTML; the rest are summed on one line. */
-    public static final int BELOW_SHOWN = 3;
+    /** What text and HTML say was waited: {@code 25.3 s across 1137 waits on 2 classes}. */
+    public String summary() {
+        final int n = distinctClasses();
+        return Durations.format(totalNanos) + " across " + waits + (waits == 1 ? " wait" : " waits") + " on " + n
+                + (n == 1 ? " class" : " classes");
+    }
 
-    /** What a park with no blocker object ({@code LockSupport.parkNanos}) is waiting on. */
-    public static final String NO_BLOCKER = "(no blocker)";
+    /** What text and HTML say of the {@link #clipped} waits; only printed when there are any. */
+    public String clippedNote() {
+        return clipped + (clipped == 1 ? " wait" : " waits") + " began before the recording or outlived it; only the "
+                + "part inside it is counted";
+    }
 
-    /** The event a wait came from. */
+    /** The event a wait came from; JSON names it by the constant's name. */
     public enum Kind {
         /** {@code Object.wait}: a {@code jdk.JavaMonitorWait} on its monitor's class. */
-        WAIT(EventKinds.JAVA_MONITOR_WAIT),
+        WAIT,
         /** {@code LockSupport.park}: a {@code jdk.ThreadPark} on its blocker's class. */
-        PARK(EventKinds.THREAD_PARK);
-
-        private final int eventKind;
-
-        Kind(final int eventKind) {
-            this.eventKind = eventKind;
-        }
-
-        /** The JFR event type: {@code jdk.JavaMonitorWait} or {@code jdk.ThreadPark}. */
-        public String eventType() {
-            return EventKinds.nameOf(eventKind);
-        }
+        PARK;
 
         /** {@code wait} or {@code park}, as the report prints it. */
         public String label() {
@@ -71,7 +68,7 @@ public record WaitReport(RecordingInfo info, String siteKey, long totalNanos, lo
      * One class waited on, by one event type.
      *
      * @param kind       the event type
-     * @param className  the JVM name of the monitor's or blocker's class, or {@link #NO_BLOCKER}
+     * @param className  the JVM name of the monitor's or blocker's class, or {@link Absent#NO_BLOCKER}
      * @param totalNanos its waits' time
      * @param waits      how many
      * @param maxNanos   the longest single wait

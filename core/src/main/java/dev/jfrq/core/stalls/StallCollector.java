@@ -11,12 +11,12 @@ import java.util.function.Predicate;
 import java.util.function.ToLongFunction;
 import jdk.jfr.consumer.RecordedEvent;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.LongObjHashMap;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.coll.ObjList;
 import dev.jfrq.core.coll.ObjObjHashMap;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.Events;
 import dev.jfrq.core.jfr.Fields;
@@ -25,6 +25,7 @@ import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Timeline.Block;
@@ -165,7 +166,7 @@ public final class StallCollector implements JfrReader.Sink {
         this.threadFilter = threadFilter;
         this.idle = idle;
         this.bystanderIdle = IdleMatcher.forBystanders(idle);
-        this.siteKey = culpritKey == SiteKey.culpritMethod() ? null : culpritKey;
+        this.siteKey = culpritKey.fromApp() ? culpritKey : null;
         this.analysis = new StallAnalysis(gapNanos, workWaits, culpritKey);
     }
 
@@ -244,7 +245,7 @@ public final class StallCollector implements JfrReader.Sink {
                     final Block park = new Block(interval, BlockKind.PARK, lock, stack, parkTimedOut(e, interval));
                     t.blocks.add(park);
                     parks.add(thread, lock, park.start(), park.interval().end(), stack);
-                } else if (!ParkShapes.NO_BLOCKER.equals(lock)) {
+                } else if (!Absent.NO_BLOCKER.equals(lock)) {
                     // A park on no object is never weighed, so its stack and times are not read.
                     final long start = Events.startNanos(e);
                     parks.add(thread, lock, start, Math.max(start, Events.endNanos(e)), Events.stack(e, interner));
@@ -268,12 +269,12 @@ public final class StallCollector implements JfrReader.Sink {
                 } else {
                     t.javaSamples++;
                 }
-                final long time = Events.startNanos(e);
+                final long timeNanos = Events.startNanos(e);
                 final Stack stack = Events.stack(e, interner);
                 if (t.watched) {
-                    t.samples.add(new Sample(time, stack, idle.isIdle(stack), inNative));
+                    t.samples.add(new Sample(timeNanos, stack, idle.isIdle(stack), inNative));
                 } else {
-                    t.otherSamples.add(time, stack, inNative);
+                    t.otherSamples.add(timeNanos, stack, inNative);
                 }
                 return;
             }
@@ -340,7 +341,7 @@ public final class StallCollector implements JfrReader.Sink {
 
     private String parkName(@Transient final RecordedEvent e) {
         final String cls = Events.className(e, Fields.PARKED_CLASS, interner);
-        return cls == null ? ParkShapes.NO_BLOCKER : lockNames.on(lockName(e, Fields.PARKED_CLASS));
+        return cls == null ? Absent.NO_BLOCKER : lockNames.on(lockName(e, Fields.PARKED_CLASS));
     }
 
     /** {@code host:port}, or {@code address:port} when the host is unknown; one string per peer. */

@@ -20,6 +20,7 @@ import jdk.jfr.Recording;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.JfrFixtures;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
@@ -209,7 +210,7 @@ class StallCollectorTest {
         });
         final StallReport r = stalls(file, "retrier");
         assertEquals(4, count(r, Verdict.PARKED), r.stalls().toString());
-        assertTrue(r.stalls().getFirst().detail().contains(ParkShapes.NO_BLOCKER), r.stalls().getFirst().detail());
+        assertTrue(r.stalls().getFirst().detail().contains(Absent.NO_BLOCKER), r.stalls().getFirst().detail());
     }
 
     @Test

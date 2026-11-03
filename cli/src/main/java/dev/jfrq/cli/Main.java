@@ -33,7 +33,6 @@ import java.util.regex.Pattern;
 import dev.jfrq.core.alloc.AllocationCollector;
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.health.HealthCollector;
 import dev.jfrq.core.health.HealthReport;
 import dev.jfrq.core.hot.HotCollector;
@@ -41,6 +40,7 @@ import dev.jfrq.core.hot.HotReport;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionCollector;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.procs.ProcessCollector;
 import dev.jfrq.core.procs.ProcessReport;
 import dev.jfrq.core.report.Html;
@@ -51,6 +51,7 @@ import dev.jfrq.core.stalls.IdleMatcher;
 import dev.jfrq.core.stalls.StallCollector;
 import dev.jfrq.core.util.Durations;
 import dev.jfrq.core.util.Glob;
+import dev.jfrq.core.util.Listing;
 import dev.jfrq.core.waits.WaitCollector;
 import dev.jfrq.core.waits.WaitReport;
 
@@ -61,7 +62,8 @@ import dev.jfrq.core.waits.WaitReport;
  *   jfrq info   recording.jfr [--thread GLOB [--top N]] [--html out.html] [--json]
  *   jfrq hot    recording.jfr [--app PREFIX] [--bucket 5m] [--sites N] [--top N] [--html out.html] [--json]
  *   jfrq procs  recording.jfr [--app PREFIX] [--top N] [--html out.html] [--json]
- *   jfrq waits  recording.jfr [--thread GLOB] [--monitor GLOB] [--app PREFIX] [--top N] [--html out.html] [--json]
+ *   jfrq waits  recording.jfr [--thread GLOB] [--monitor GLOB] [--app PREFIX] [--sites N] [--top N]
+ *               [--html out.html] [--json]
  *   jfrq alloc  recording.jfr [--baseline before.jfr] [--top N] [--sites] [--app PREFIX] [--html out.html] [--json]
  *   jfrq locks  recording.jfr [--min 10ms] [--thread GLOB] [--lock GLOB] [--idle REGEX,...] [--by-site] [--top N] [--html out.html] [--json]
  *   jfrq stalls recording.jfr --thread GLOB [--gap 50ms] [--idle REGEX,...] [--app PREFIX] [--top N] [--html out.html] [--json]
@@ -111,7 +113,7 @@ public final class Main {
                              frame outside the JDK below it says what a container dispatched to
               --bucket D     the timeline's resolution (default 5m)
               --sites N      sites listed per family (default 4); the rest are summed on one
-                             line. --json lists --top of them
+                             line. --top ranks the families; --json lists --top sites
 
             procs:
               --app PREFIX   name each command's sites by the innermost frame under one of
@@ -121,11 +123,13 @@ public final class Main {
               --thread GLOB  only waits by threads matching GLOB (e.g. 'AWT-EventQueue-*')
               --monitor GLOB only waits on these classes: the monitor's class for a wait, the
                              blocker's for a park (e.g. '*QueueFlusher,*ReentrantLock*');
-                             a park with no blocker is '(no blocker)'
+                             a park with no blocker is '(no blocker object)'
               --app PREFIX   name each class's sites by the innermost frame under one of these
                              comma-separated prefixes, as hot's --app does; under each site,
                              the code below it as hot splits it. A wait that crosses an end of
                              the recording counts only the part inside it
+              --sites N      sites listed per class (default 4); the rest are summed on one
+                             line. --top ranks the classes; --json lists --top sites
 
             alloc:
               --baseline F   compare against recording F (rates, so lengths may differ)
@@ -186,7 +190,7 @@ public final class Main {
             case "info" -> valued.add("thread");
             case "hot" -> valued.addAll(Set.of("app", "bucket", "sites"));
             case "procs" -> valued.add("app");
-            case "waits" -> valued.addAll(Set.of("thread", "monitor", "app"));
+            case "waits" -> valued.addAll(Set.of("thread", "monitor", "app", "sites"));
             case "alloc" -> {
                 valued.addAll(Set.of("baseline", "app"));
                 flags.add("sites");
@@ -409,7 +413,7 @@ public final class Main {
     private record Procs(Path recording, int top, SiteKey key, Path html) implements Question {
     }
 
-    private record Waits(Path recording, int top, Glob threads, Glob monitors, SiteKey key, Path html)
+    private record Waits(Path recording, int top, int sites, Glob threads, Glob monitors, SiteKey key, Path html)
             implements Question {
     }
 
@@ -448,7 +452,7 @@ public final class Main {
         if (bucket == Durations.INFINITE) {
             throw new Args.UsageException("--bucket must be finite");
         }
-        return new Hot(recording, args.top(), args.positive("sites", HotReport.SITES_SHOWN), siteKey(args), bucket,
+        return new Hot(recording, args.top(), args.positive("sites", Listing.SITES_SHOWN), siteKey(args), bucket,
                 htmlTarget(args, recording, null));
     }
 
@@ -457,15 +461,9 @@ public final class Main {
     }
 
     private static Waits waits(final Args args, final Path recording) {
-        final Glob threads = args.option("thread").map(Glob::of).orElse(Glob.any());
-        if (threads.isEmpty()) {
-            throw new Args.UsageException("--thread must name at least one pattern");
-        }
-        final Glob monitors = args.option("monitor").map(Glob::of).orElse(Glob.any());
-        if (monitors.isEmpty()) {
-            throw new Args.UsageException("--monitor must name at least one pattern");
-        }
-        return new Waits(recording, args.top(), threads, monitors, siteKey(args), htmlTarget(args, recording, null));
+        return new Waits(recording, args.top(), args.positive("sites", Listing.SITES_SHOWN),
+                args.globs("thread").orElse(Glob.any()), args.globs("monitor").orElse(Glob.any()), siteKey(args),
+                htmlTarget(args, recording, null));
     }
 
     private static Alloc alloc(final Args args, final Path recording) throws IOException {
@@ -544,11 +542,7 @@ public final class Main {
             // --top bounds the creators --thread lists; on its own it would change nothing, silently.
             throw new Args.UsageException("info takes --top only with --thread");
         }
-        final Glob threads = args.option("thread").map(Glob::of).orElse(null);
-        if (threads != null && threads.isEmpty()) {
-            throw new Args.UsageException("--thread must name at least one pattern");
-        }
-        return new Info(recording, top, threads, htmlTarget(args, recording, null));
+        return new Info(recording, top, args.globs("thread").orElse(null), htmlTarget(args, recording, null));
     }
 
     private int info(final Info q) throws IOException {
@@ -591,8 +585,8 @@ public final class Main {
         JfrReader.read(q.recording(), collector);
         phase("read");
         final WaitReport report = collector.report();
-        out.print(json ? Json.waits(report, q.top(), VERSION) : Text.waits(report, q.top()));
-        html(q.html(), () -> Html.waits(report, q.top()));
+        out.print(json ? Json.waits(report, q.top(), VERSION) : Text.waits(report, q.top(), q.sites()));
+        html(q.html(), () -> Html.waits(report, q.top(), q.sites()));
         phase("render");
         return 0;
     }
@@ -622,15 +616,8 @@ public final class Main {
     private static Locks locks(final Args args, final Path recording) {
         final int top = args.top();
         final long min = args.durationOption("min", "0", true);
-        final Glob threads = args.option("thread").map(Glob::of).orElse(Glob.any());
-        if (threads.isEmpty()) {
-            throw new Args.UsageException("--thread must name at least one pattern");
-        }
-        final Glob locks = args.option("lock").map(Glob::of).orElse(Glob.any());
-        if (locks.isEmpty()) {
-            throw new Args.UsageException("--lock must name at least one pattern");
-        }
-        return new Locks(recording, top, min, threads, locks, workWaits(args), args.flag("by-site"),
+        return new Locks(recording, top, min, args.globs("thread").orElse(Glob.any()),
+                args.globs("lock").orElse(Glob.any()), workWaits(args), args.flag("by-site"),
                 htmlTarget(args, recording, null));
     }
 
@@ -691,11 +678,8 @@ public final class Main {
 
     private static Stalls stalls(final Args args, final Path recording) {
         final int top = args.top();
-        final Glob threads = Glob.of(args.option("thread")
-                .orElseThrow(() -> new Args.UsageException("stalls needs --thread GLOB (see 'jfrq info' for names)")));
-        if (threads.isEmpty()) {
-            throw new Args.UsageException("--thread must name at least one pattern");
-        }
+        final Glob threads = args.globs("thread")
+                .orElseThrow(() -> new Args.UsageException("stalls needs --thread GLOB (see 'jfrq info' for names)"));
         final long gap = args.durationOption("gap", "50ms", false);
         final Optional<String> idleOption = args.option("idle");
         // Here --idle replaces the patterns that say a *sample* is at the thread's idle point,

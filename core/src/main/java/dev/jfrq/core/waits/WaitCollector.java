@@ -13,19 +13,20 @@ import java.util.Set;
 import java.util.function.Predicate;
 import jdk.jfr.consumer.RecordedEvent;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.ObjList;
-import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.Events;
 import dev.jfrq.core.jfr.Fields;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
+import dev.jfrq.core.jfr.ThreadFilter;
 import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.util.ClassNames;
@@ -49,13 +50,9 @@ public final class WaitCollector implements JfrReader.Sink {
 
     private static final Set<String> TYPES = Set.of(MONITOR_WAIT, THREAD_PARK);
 
-    private static final long UNKNOWN = -1;
-
-    private final Predicate<String> threads;
+    private final ThreadFilter threads;
     private final Predicate<String> classes;
     private final SiteKey key;
-    /** 1 when a thread's name passes the thread filter, 0 when not; resolved once per thread. */
-    private final ObjLongHashMap<ThreadRef> verdicts = new ObjLongHashMap<>(256, UNKNOWN);
     private final ObjObjHashMap<String, Waits> waits = new ObjObjHashMap<>(64);
     private final ObjObjHashMap<String, Waits> parks = new ObjObjHashMap<>(64);
     private Interner interner = new Interner();
@@ -67,7 +64,7 @@ public final class WaitCollector implements JfrReader.Sink {
      * @param key     which frame of a waiting stack names its site
      */
     public WaitCollector(final Predicate<String> threads, final Predicate<String> classes, final SiteKey key) {
-        this.threads = threads;
+        this.threads = new ThreadFilter(threads);
         this.classes = classes;
         this.key = key;
     }
@@ -94,46 +91,36 @@ public final class WaitCollector implements JfrReader.Sink {
             return;
         }
         final ThreadRef thread = interner.thread(e);
-        if (thread == null || !passes(thread)) {
+        if (thread == null || !threads.passes(thread)) {
+            // Most events of a filtered pass are other threads': their class is not read.
             return;
         }
-        final String cls = Events.className(e, monitor ? Fields.MONITOR_CLASS : Fields.PARKED_CLASS, interner);
-        final Waits into = waitsOf(monitor ? waits : parks, cls == null ? WaitReport.NO_BLOCKER : cls);
+        final Waits into = waitsOf(monitor ? WaitReport.Kind.WAIT : WaitReport.Kind.PARK, thread,
+                Events.className(e, monitor ? Fields.MONITOR_CLASS : Fields.PARKED_CLASS, interner));
         if (into != null) {
-            final long startNanos = Events.startNanos(e);
-            into.add(startNanos, Math.max(startNanos, Events.endNanos(e)), Events.stack(e, interner));
+            into.add(Events.startNanos(e), Events.endNanos(e), Events.stack(e, interner));
         }
     }
 
-    /** A wait whose fields are already read: what {@link #accept(RecordedEvent, int)} does, for tests. */
-    void waited(final WaitReport.Kind kind, final ThreadRef thread, final String cls, final long startNanos,
-            final long endNanos, final Stack stack) {
-        if (passes(thread)) {
-            final Waits into = waitsOf(kind == WaitReport.Kind.WAIT ? waits : parks, cls);
-            if (into != null) {
-                into.add(startNanos, endNanos, stack);
-            }
+    /**
+     * Where a wait by {@code thread} on {@code cls} is kept, or {@code null} when the thread or the
+     * class filter leaves it out. A {@code null} class is a park with no blocker object,
+     * {@link Absent#NO_BLOCKER}. The thread filter runs once per thread, the class filter once per class.
+     * {@link #accept(RecordedEvent, int)} asks the thread filter before reading the class, and reads
+     * the time and the stack only of a wait kept here.
+     */
+    Waits waitsOf(final WaitReport.Kind kind, final ThreadRef thread, final String cls) {
+        if (!threads.passes(thread)) {
+            return null;
         }
-    }
-
-    private boolean passes(final ThreadRef thread) {
-        final int index = verdicts.keyIndex(thread);
-        if (index < 0) {
-            return verdicts.valueAtQuick(index) == 1;
-        }
-        final boolean passes = threads.test(thread.name());
-        verdicts.putAt(index, thread, passes ? 1 : 0);
-        return passes;
-    }
-
-    /** The class's waits, or {@code null} for a class the filter leaves out; the filter runs once per class. */
-    private Waits waitsOf(final ObjObjHashMap<String, Waits> byClass, final String cls) {
-        final int index = byClass.keyIndex(cls);
+        final ObjObjHashMap<String, Waits> byClass = kind == WaitReport.Kind.WAIT ? waits : parks;
+        final String name = cls == null ? Absent.NO_BLOCKER : cls;
+        final int index = byClass.keyIndex(name);
         if (index < 0) {
             return byClass.valueAtQuick(index);
         }
-        final boolean kept = classes.test(cls) || classes.test(ClassNames.pretty(cls));
-        return byClass.putAt(index, cls, kept ? new Waits() : null);
+        final boolean kept = classes.test(name) || classes.test(ClassNames.pretty(name));
+        return byClass.putAt(index, name, kept ? new Waits() : null);
     }
 
     @Override
@@ -187,7 +174,7 @@ public final class WaitCollector implements JfrReader.Sink {
             final Stack stack = e.getKey();
             final Acc a = e.getValue();
             final int at = key.frameIndex(stack);
-            final String site = at < 0 ? SiteKey.NO_STACK : stack.frameQuick(at).stableName();
+            final String site = key.of(stack);
             sites.computeIfAbsent(site, _ -> new Acc()).merge(a);
             belowSites.computeIfAbsent(site, _ -> new HashMap<>())
                     .computeIfAbsent(SiteKey.below(stack, at), _ -> new Acc()).merge(a);
@@ -220,15 +207,16 @@ public final class WaitCollector implements JfrReader.Sink {
     }
 
     /** One class's waits while reading, in file order: start, end and stack of each. */
-    private static final class Waits {
+    static final class Waits {
 
-        final LongList startsNanos = new LongList(64);
-        final LongList endsNanos = new LongList(64);
-        final ObjList<Stack> stacks = new ObjList<>(64);
+        private final LongList startsNanos = new LongList(64);
+        private final LongList endsNanos = new LongList(64);
+        private final ObjList<Stack> stacks = new ObjList<>(64);
 
+        /** A wait; an end before the start (a clock step between the two reads) is taken as the start. */
         void add(final long startNanos, final long endNanos, final Stack stack) {
             startsNanos.add(startNanos);
-            endsNanos.add(endNanos);
+            endsNanos.add(Math.max(startNanos, endNanos));
             stacks.add(stack);
         }
     }

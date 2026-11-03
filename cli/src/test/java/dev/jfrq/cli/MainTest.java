@@ -688,7 +688,8 @@ class MainTest {
                 "--monitor", "*Flusher"));
         assertEquals(1L, doc.get("classesFound"), doc.toString());
         final Map<String, Object> flusher = object(list(doc, "classes").getFirst());
-        assertEquals("jdk.JavaMonitorWait", flusher.get("event"));
+        assertEquals("WAIT", flusher.get("kind"));
+        assertFalse(flusher.containsKey("event"), flusher.toString());
         assertEquals("dev.jfrq.cli.MainTest$Flusher", flusher.get("class"));
         assertEquals(1L, flusher.get("waits"));
         assertTrue((Long) flusher.get("totalNanos") > 0, flusher.toString());
@@ -698,7 +699,19 @@ class MainTest {
         assertEquals(0, none.status(), none.err());
         assertTrue(none.out().contains("No waits match."), none.out());
         assertEquals(2, run("waits", recording.toString(), "--monitor", ",").status());
-        assertEquals(2, run("waits", recording.toString(), "--sites", "3").status());
+        assertEquals(2, run("waits", recording.toString(), "--sites", "0").status());
+        assertEquals(2, run("waits", recording.toString(), "--bucket", "1s").status());
+    }
+
+    /// `waits` takes `--sites` as `hot` does: one listed site per class, the rest summed on a line naming the option.
+    @Test
+    void waitsTakesSites() {
+        final Run all = run("waits", recording.toString(), "--sites", "1000");
+        assertEquals(0, all.status(), all.err());
+        assertFalse(all.out().contains(" more sites"), all.out());
+        final Run one = run("waits", recording.toString(), "--sites", "1");
+        assertEquals(0, one.status(), one.err());
+        assertFalse(one.out().contains("--top to list them)"), one.out());
     }
 
     @Test
@@ -813,7 +826,7 @@ class MainTest {
                 "sun.java2d.metal.MTLLayer.blitTexture", 7, null);
         final Stall park = new Stall(new ThreadRef(1, "AWT-EventQueue-0"), new Interval(1_000_000_000L, 2_010_000_000L),
                 Stall.Verdict.PARKED, "parked on java.util.concurrent.locks.ReentrantLock$NonfairSync@1", Stack.EMPTY,
-                Stall.Evidence.EVENT, 0, List.of(seen));
+                Stall.Evidence.EVENT, 0, List.of(seen), Stall.LockHolder.UNRECORDED);
         final StallReport r = new StallReport(info, 50_000_000L, List.of(), List.of(park), List.of(), List.of());
         final String line = "AppKit Thread: 7 native samples, all in sun.java2d.metal.MTLLayer.blitTexture";
 

@@ -5,6 +5,7 @@ package dev.jfrq.core.stalls;
 
 import java.util.List;
 
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
@@ -48,16 +49,6 @@ public record Stall(ThreadRef thread, Interval interval, Verdict verdict, String
         this(thread, interval, verdict, detail, stack, evidence, samples, List.of(), holder);
     }
 
-    /**
-     * A stall with the threads seen running during it, which only a lock with no recorded holder
-     * has; with none, a stall that is no wait on a lock.
-     */
-    public Stall(final ThreadRef thread, final Interval interval, final Verdict verdict, final String detail,
-                 final Stack stack, final Evidence evidence, final int samples, final List<Meanwhile> meanwhile) {
-        this(thread, interval, verdict, detail, stack, evidence, samples, meanwhile,
-                meanwhile.isEmpty() ? LockHolder.NOT_A_LOCK : LockHolder.UNRECORDED);
-    }
-
     /** This stall with the threads seen running during it. */
     public Stall withMeanwhile(final List<Meanwhile> seen) {
         return new Stall(thread, interval, verdict, detail, stack, evidence, samples, seen, holder);
@@ -84,7 +75,7 @@ public record Stall(ThreadRef thread, Interval interval, Verdict verdict, String
         /** What one blocking event says. */
         static LockHolder of(final Timeline.Block b) {
             return switch (b.kind()) {
-                case PARK -> ParkShapes.NO_BLOCKER.equals(b.detail()) ? NOT_A_LOCK : UNRECORDED;
+                case PARK -> Absent.NO_BLOCKER.equals(b.detail()) ? NOT_A_LOCK : UNRECORDED;
                 case MONITOR -> b.owner() == null ? UNRECORDED : KNOWN;
                 case OBJECT_WAIT, SLEEP, SOCKET_READ, SOCKET_WRITE, FILE_READ, FILE_WRITE, FILE_FORCE -> NOT_A_LOCK;
             };

@@ -12,9 +12,9 @@ import java.util.Map;
 import java.util.Set;
 import jdk.jfr.consumer.RecordedEvent;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.Events;
 import dev.jfrq.core.jfr.Fields;
@@ -22,9 +22,12 @@ import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.jfr.Transient;
 import dev.jfrq.core.model.Interner;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.report.RecordingSummary;
+import dev.jfrq.core.util.Count;
+import dev.jfrq.core.util.Listing;
 
 /**
  * Which processes the JVM started: {@code jdk.ProcessStart} by command, by the family of the
@@ -48,7 +51,7 @@ public final class ProcessCollector implements JfrReader.Sink {
     static final int NAMES_CACHED = 4_096;
 
     /** Who started a process when the event names no thread. */
-    private static final ThreadRef NO_THREAD = new ThreadRef(-1, "(no thread)");
+    private static final ThreadRef NO_THREAD = new ThreadRef(-1, Absent.NO_THREAD);
 
     private final SiteKey key;
     private final ObjObjHashMap<String, String> names = new ObjObjHashMap<>(256);
@@ -173,33 +176,21 @@ public final class ProcessCollector implements JfrReader.Sink {
                         sites.merge(key.of(c.stacks.keyAtSlot(t)), c.stacks.valueAtSlot(t), Long::sum);
                     }
                 }
-                rows.add(new ProcessReport.Command(name, c.starts, c.example, ranked(threads), ranked(sites)));
+                rows.add(new ProcessReport.Command(name, c.starts, c.example, Count.ranked(threads),
+                        Count.ranked(sites)));
             }
         }
         rows.sort(Comparator.comparingLong(ProcessReport.Command::starts).reversed()
                 .thenComparing(ProcessReport.Command::command));
         final List<ProcessReport.Family> families = new ArrayList<>(byFamily.size());
         for (final Map.Entry<String, Map<String, Long>> e : byFamily.entrySet()) {
-            final List<ProcessReport.Count> started = ranked(e.getValue());
-            long starts = 0;
-            for (final ProcessReport.Count c : started) {
-                starts += c.starts();
-            }
-            families.add(new ProcessReport.Family(e.getKey(), familyThreads.get(e.getKey()).size(), starts, started));
+            final List<Count> started = Count.ranked(e.getValue());
+            families.add(new ProcessReport.Family(e.getKey(), familyThreads.get(e.getKey()).size(),
+                    Listing.sum(started, Count::count), started));
         }
         families.sort(Comparator.comparingLong(ProcessReport.Family::starts).reversed()
                 .thenComparing(ProcessReport.Family::name));
         report = new ProcessReport(info, total, key.description(), List.copyOf(rows), List.copyOf(families));
-    }
-
-    private static List<ProcessReport.Count> ranked(final Map<String, Long> counts) {
-        final List<ProcessReport.Count> rows = new ArrayList<>(counts.size());
-        for (final Map.Entry<String, Long> e : counts.entrySet()) {
-            rows.add(new ProcessReport.Count(e.getKey(), e.getValue()));
-        }
-        rows.sort(Comparator.comparingLong(ProcessReport.Count::starts).reversed()
-                .thenComparing(ProcessReport.Count::name));
-        return List.copyOf(rows);
     }
 
     /** The answer, after {@link #finish}. */

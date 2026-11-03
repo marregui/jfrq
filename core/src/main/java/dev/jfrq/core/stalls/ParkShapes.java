@@ -9,6 +9,7 @@ import java.util.Map;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.ObjList;
 import dev.jfrq.core.coll.ObjLongHashMap;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.model.Interval;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
@@ -35,9 +36,6 @@ import dev.jfrq.core.util.Sorts;
  */
 final class ParkShapes {
 
-    /** The detail of a park that names no blocker object. */
-    static final String NO_BLOCKER = "(no blocker object)";
-
     private static final int SLOT = 3;
     private static final int LOCK = 0;
     private static final int START = 1;
@@ -49,11 +47,11 @@ final class ParkShapes {
     private final ObjList<Stack> stacks = new ObjList<>(64);
 
     /**
-     * @param lock  the lock's name as the collector details it; {@link #NO_BLOCKER} is ignored
+     * @param lock  the lock's name as the collector details it; {@link Absent#NO_BLOCKER} is ignored
      * @param stack the park's stack, which is what a perch identifies
      */
     void add(final ThreadRef waiter, final String lock, final long start, final long end, final Stack stack) {
-        if (NO_BLOCKER.equals(lock)) {
+        if (Absent.NO_BLOCKER.equals(lock)) {
             return;
         }
         final int index = lockIds.keyIndex(lock);

@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.ToLongFunction;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.IdentityObjObjHashMap;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.Nulls;
@@ -21,6 +20,7 @@ import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Stall.Evidence;
@@ -1754,7 +1754,7 @@ public final class StallAnalysis {
         if (culprit == null) {
             return "<no stack>";
         }
-        if (culpritKey != SiteKey.culpritMethod()) {
+        if (culpritKey.fromApp()) {
             final int index = appCulpritNames.keyIndex(stack);
             return index < 0 ? appCulpritNames.valueAtQuick(index) : appCulpritNames.putAt(index, stack, culpritKey.of(stack));
         }

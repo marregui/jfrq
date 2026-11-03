@@ -13,6 +13,7 @@ import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.coll.ObjHashSet;
 import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.EventKinds;
 import dev.jfrq.core.jfr.Events;
 import dev.jfrq.core.jfr.Fields;
@@ -343,7 +344,6 @@ public final class AllocationCollector implements JfrReader.Sink {
     }
 
     private static final class Accumulator {
-        private static final String NO_THREAD = "<no thread>";
         private static final String NO_CLASS = "?";
         static final int HEAVY_KEPT = 256;
 
@@ -449,7 +449,7 @@ public final class AllocationCollector implements JfrReader.Sink {
             if (bytes <= 0) {
                 return;
             }
-            final String threadName = thread == null ? NO_THREAD : thread.name();
+            final String threadName = thread == null ? Absent.NO_THREAD : thread.name();
             final String className = cls == null ? NO_CLASS : cls;
             final boolean virtual = thread != null && thread.isVirtual();
             add(bytes, threadName, className, site, virtual && dropFirstPerThread);

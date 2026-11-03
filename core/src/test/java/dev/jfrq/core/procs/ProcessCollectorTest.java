@@ -10,12 +10,14 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.util.Count;
+import dev.jfrq.core.util.Listing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -80,23 +82,27 @@ class ProcessCollectorTest {
         final ProcessReport.Command git = r.commands().getFirst();
         assertEquals(4, git.starts());
         assertEquals("git -C /a status", git.example());
-        assertEquals(List.of(new ProcessReport.Count("folder-poll", 3), new ProcessReport.Count("kit-jobs-N", 1)),
+        assertEquals(List.of(new Count("folder-poll", 3), new Count("kit-jobs-N", 1)),
                 git.threads());
-        assertEquals(List.of(new ProcessReport.Count("com.app.Processes.run", 3),
-                new ProcessReport.Count("com.app.Jobs.list", 1)), git.sites());
+        assertEquals(List.of(new Count("com.app.Processes.run", 3),
+                new Count("com.app.Jobs.list", 1)), git.sites());
 
-        assertEquals(List.of(new ProcessReport.Family("folder-poll", 1, 3, List.of(new ProcessReport.Count("git", 3))),
-                new ProcessReport.Family("kit-jobs-N", 2, 3, List.of(new ProcessReport.Count("python3", 2),
-                        new ProcessReport.Count("git", 1)))), r.families());
-        assertEquals("folder-poll 3, kit-jobs-N 1", ProcessReport.listed(git.threads()));
+        assertEquals(List.of(new ProcessReport.Family("folder-poll", 1, 3, List.of(new Count("git", 3))),
+                new ProcessReport.Family("kit-jobs-N", 2, 3, List.of(new Count("python3", 2),
+                        new Count("git", 1)))), r.families());
+        assertEquals("folder-poll 3, kit-jobs-N 1", Listing.listed(git.threads(), ProcessReport.SHOWN));
     }
 
-    /// A list longer than the rows show sums its rest on one entry.
+    /// A rate under one per minute keeps two significant digits, one from one up keeps one decimal, none is `0.0`.
     @Test
-    void aLongListSumsItsRest() {
-        assertEquals("a 4, b 3, c 2, 2 more 2", ProcessReport.listed(List.of(new ProcessReport.Count("a", 4),
-                new ProcessReport.Count("b", 3), new ProcessReport.Count("c", 2), new ProcessReport.Count("d", 1),
-                new ProcessReport.Count("e", 1))));
+    void perMinuteTextKeepsSmallRatesReadable() {
+        final ProcessReport r = new ProcessReport(new RecordingInfo(Path.of("t.jfr"),
+                new Interval(T0, T0 + 1_800 * SECOND), 1, Map.of(), Map.of(), Set.of(), List.of()), 3, "",
+                List.of(), List.of());
+        assertEquals("0.10", r.perMinuteText(3));
+        assertEquals("0.033", r.perMinuteText(1));
+        assertEquals("1.5", r.perMinuteText(45));
+        assertEquals("0.0", r.perMinuteText(0));
     }
 
     /// More distinct command lines than the name cache holds: the cache is emptied and every start still counts.
@@ -112,8 +118,8 @@ class ProcessCollectorTest {
         c.finish(info());
         assertEquals(n, c.report().starts());
         assertEquals(List.of(new ProcessReport.Command("touch", n, "touch /tmp/f0",
-                List.of(new ProcessReport.Count("fork-storm", n)),
-                List.of(new ProcessReport.Count("com.app.Fork.run", n)))), c.report().commands());
+                List.of(new Count("fork-storm", n)),
+                List.of(new Count("com.app.Fork.run", n)))), c.report().commands());
     }
 
     /// No start is an empty report with a zero rate, and asking before `finish` is an error.

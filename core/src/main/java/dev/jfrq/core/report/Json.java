@@ -12,7 +12,6 @@ import java.util.Map;
 
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
 import dev.jfrq.core.health.ThreadCpu;
@@ -21,6 +20,7 @@ import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.Frame;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.procs.ProcessReport;
@@ -28,6 +28,7 @@ import dev.jfrq.core.stalls.Meanwhile;
 import dev.jfrq.core.stalls.Stall;
 import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
+import dev.jfrq.core.util.Count;
 import dev.jfrq.core.waits.WaitReport;
 
 /**
@@ -408,7 +409,7 @@ public final class Json {
             w.name("nativeSamples").value(m.nativeSamples());
             w.name("frame").value(m.frame());
             w.name("frameSamples").value(m.frameSamples());
-            w.name("site").value(m.site());
+            w.name("site").value(m.siteOrNull());
             w.end();
         }
         w.end();
@@ -607,13 +608,8 @@ public final class Json {
         return w.finish();
     }
 
-    private static void counts(final Writer w, final List<HotReport.Count> counts) {
-        for (final HotReport.Count c : counts) {
-            w.object();
-            w.name("frame").value(c.frame());
-            w.name("samples").value(c.samples());
-            w.end();
-        }
+    private static void counts(final Writer w, final List<Count> counts) {
+        counts(w, counts, "frame", "samples");
     }
 
     /**
@@ -635,11 +631,11 @@ public final class Json {
             w.name("example").value(c.example());
             w.name("familiesFound").value(c.threads().size());
             w.name("families").array();
-            starts(w, top(c.threads(), top), "family");
+            counts(w, top(c.threads(), top), "family", "starts");
             w.end();
             w.name("sitesFound").value(c.sites().size());
             w.name("sites").array();
-            starts(w, top(c.sites(), top), "frame");
+            counts(w, top(c.sites(), top), "frame", "starts");
             w.end();
             w.end();
         }
@@ -654,7 +650,7 @@ public final class Json {
             w.name("perMinute").value(r.perMinute(f.starts()));
             w.name("commandsFound").value(f.commands().size());
             w.name("commands").array();
-            starts(w, top(f.commands(), top), "command");
+            counts(w, top(f.commands(), top), "command", "starts");
             w.end();
             w.end();
         }
@@ -662,11 +658,13 @@ public final class Json {
         return w.finish();
     }
 
-    private static void starts(final Writer w, final List<ProcessReport.Count> counts, final String field) {
-        for (final ProcessReport.Count c : counts) {
+    /** Each count as an object: its name under {@code nameField}, its count under {@code countField}. */
+    private static void counts(final Writer w, final List<Count> counts, final String nameField,
+            final String countField) {
+        for (final Count c : counts) {
             w.object();
-            w.name(field).value(c.name());
-            w.name("starts").value(c.starts());
+            w.name(nameField).value(c.name());
+            w.name(countField).value(c.count());
             w.end();
         }
     }
@@ -690,7 +688,7 @@ public final class Json {
         w.name("classes").array();
         for (final WaitReport.Monitor m : top(r.classes(), top)) {
             w.object();
-            w.name("event").value(m.kind().eventType());
+            w.name("kind").value(m.kind().name());
             w.name("class").value(m.className());
             w.name("totalNanos").value(m.totalNanos());
             w.name("waits").value(m.waits());
@@ -736,7 +734,7 @@ public final class Json {
             w.name("countedBytes").value(r.counted(row.key()).orElse(null));
             w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
             w.name("share").value(row.share());
-            w.name("samples").value(r.support().thread(row.key()));
+            w.name("samples").value(r.support().samplesOfThread(row.key()));
             w.name("virtualBytes").value(r.support().virtualBytesOfThread(row.key()));
             w.name("topClasses").array();
             for (final AllocationReport.Row<String> c : r.classesOf(row.key(), 3)) {
@@ -758,7 +756,7 @@ public final class Json {
             w.name("bytes").value(row.bytes());
             w.name("bytesPerSecond").value(Math.round(r.rate(row.bytes())));
             w.name("share").value(row.share());
-            w.name("samples").value(r.support().className(row.key()));
+            w.name("samples").value(r.support().samplesOfClass(row.key()));
             w.name("virtualBytes").value(r.support().virtualBytesOfClass(row.key()));
             w.end();
         }
@@ -833,8 +831,8 @@ public final class Json {
             w.object();
             w.name("thread").value(x.key());
             delta(w, x);
-            w.name("samplesBefore").value(d.baseline().support().thread(x.key()));
-            w.name("samplesAfter").value(d.current().support().thread(x.key()));
+            w.name("samplesBefore").value(d.baseline().support().samplesOfThread(x.key()));
+            w.name("samplesAfter").value(d.current().support().samplesOfThread(x.key()));
             w.end();
         }
         w.end();
@@ -845,8 +843,8 @@ public final class Json {
             w.object();
             w.name("class").value(x.key());
             delta(w, x);
-            w.name("samplesBefore").value(d.baseline().support().className(x.key()));
-            w.name("samplesAfter").value(d.current().support().className(x.key()));
+            w.name("samplesBefore").value(d.baseline().support().samplesOfClass(x.key()));
+            w.name("samplesAfter").value(d.current().support().samplesOfClass(x.key()));
             w.end();
         }
         w.end();

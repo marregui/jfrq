@@ -10,12 +10,13 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
+import dev.jfrq.core.util.Count;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -78,16 +79,16 @@ class HotCollectorTest {
         final HotReport.Site tabs = edtGroup.sites().getFirst();
         assertEquals("com.app.Tabs.paint", tabs.frame());
         assertEquals(4, tabs.samples());
-        assertEquals(List.of(new HotReport.Count("org.lib.TabsUI.update", 3),
-                new HotReport.Count("javax.swing.JComponent.paint", 1)),
+        assertEquals(List.of(new Count("org.lib.TabsUI.update", 3),
+                new Count("javax.swing.JComponent.paint", 1)),
                 tabs.next());
 
         final HotReport.Group pool = r.groups().get(1);
         assertEquals(2, pool.threads());
-        assertEquals(List.of(new HotReport.Count(SiteKey.AT_SITE, 2)), pool.sites().getFirst().next());
+        assertEquals(List.of(new Count(SiteKey.AT_SITE, 2)), pool.sites().getFirst().next());
 
-        assertEquals(new HotReport.Count("sun.java2d.Renderer.end", 4), r.leaves().getFirst());
-        assertEquals(new HotReport.Count("com.app.Worker.run", 2), r.leaves().get(1));
+        assertEquals(new Count("sun.java2d.Renderer.end", 4), r.leaves().getFirst());
+        assertEquals(new Count("com.app.Worker.run", 2), r.leaves().get(1));
 
         // Minute buckets from the minute T0 falls in: the EDT in the first, the pool in the second.
         assertEquals(Math.floorDiv(T0, 60 * SECOND) * 60 * SECOND, r.originNanos());
@@ -110,8 +111,8 @@ class HotCollectorTest {
         // One sample each: ties rank by name, and '(' sorts before letters.
         assertEquals(SiteKey.NO_STACK, sites.getFirst().frame());
         assertEquals("org.lib.Cache.get", sites.get(1).frame());
-        assertEquals(List.of(new HotReport.Count("java.util.HashMap.get", 1)), sites.get(1).next());
-        assertTrue(r.leaves().contains(new HotReport.Count(SiteKey.NO_STACK, 1)), r.leaves().toString());
+        assertEquals(List.of(new Count("java.util.HashMap.get", 1)), sites.get(1).next());
+        assertTrue(r.leaves().contains(new Count(SiteKey.NO_STACK, 1)), r.leaves().toString());
     }
 
     /// A bucket too fine for the span is widened; a recording with no samples is an empty report.

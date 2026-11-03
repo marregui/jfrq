@@ -23,6 +23,7 @@ import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 
@@ -119,7 +120,7 @@ class AllocationTest {
         // Each thread lost its earliest sample by time, not by arrival.
         assertEquals(Map.of("worker", 400L, "vt-1", 700L), r.byThread());
         assertEquals(Map.of(SITE_A, 400L, SITE_B, 700L), r.bySite());
-        assertEquals(1, r.support().thread("vt-1"));
+        assertEquals(1, r.support().samplesOfThread("vt-1"));
         // The row says what it rests on: vt-1's kept sample is virtual, the worker's is not.
         assertEquals(700, r.support().virtualBytesOfThread("vt-1"));
         assertEquals(0, r.support().virtualBytesOfThread("worker"));
@@ -271,6 +272,21 @@ class AllocationTest {
         assertEquals(Map.of("worker", 500L), r.estimatedWhileCounted());
         assertEquals(Optional.empty(), r.counted("worker"));
         assertEquals("", r.droppedNote());
+    }
+
+    /// A TLAB event is the TLAB's own size, with no carrier history: a row of them is never marked virtual.
+    @Test
+    void tlabEventsOnAVirtualThreadAreNotMarkedVirtual() {
+        final ThreadRef vt = new ThreadRef(2, "vt-1", true);
+        final AllocationCollector c = new AllocationCollector();
+        c.tlab(vt, 2 * S, 500, "[B", SITE_A);
+        c.tlab(vt, 3 * S, 700, "[B", SITE_A);
+        c.finish(info("a.jfr", 10));
+        final AllocationReport r = c.report();
+        assertEquals(Map.of("vt-1", 1_200L), r.byThread());
+        assertEquals(0, r.support().virtualBytesOfThread("vt-1"));
+        assertEquals(0, r.support().virtualBytesOfSite(SITE_A));
+        assertEquals(0, r.sites(SiteKey.culpritMethod(), 5).getFirst().virtualBytes());
     }
 
     @Test

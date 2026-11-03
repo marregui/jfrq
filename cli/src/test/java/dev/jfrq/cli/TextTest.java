@@ -13,7 +13,6 @@ import org.junit.jupiter.api.Test;
 
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
@@ -23,6 +22,7 @@ import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.report.Html;
@@ -36,6 +36,7 @@ import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
 import dev.jfrq.core.stalls.Timeline.PauseKind;
 import dev.jfrq.core.util.Glob;
+import dev.jfrq.core.waits.WaitReport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -682,5 +683,28 @@ class TextTest {
         final ThreadCensus.Result census = new ThreadCensus.Result(null, null, null, null, null, Set.of(), starts,
                 ThreadCpu.Result.UNKNOWN);
         return Text.info(info, census, RecordingSummary.starts(census, Glob.of("w-*"), 5));
+    }
+
+    /// `waits` in text and HTML: the same header with its class count, the sites cut at `--sites` with the same
+    /// line for the rest, and the frames below a site summed past the first few.
+    @Test
+    void waitsTextAndHtmlAgree() {
+        final List<WaitReport.Below> below = List.of(new WaitReport.Below("a.A.a", 40 * MS, 4),
+                new WaitReport.Below("b.B.b", 30 * MS, 3), new WaitReport.Below("c.C.c", 20 * MS, 2),
+                new WaitReport.Below("d.D.d", 5 * MS, 1), new WaitReport.Below("e.E.e", 5 * MS, 1));
+        final List<WaitReport.Site> sites = List.of(new WaitReport.Site("s.One.run", 100 * MS, 11, 30 * MS, below),
+                new WaitReport.Site("s.Two.run", 60 * MS, 2, 40 * MS, List.of()),
+                new WaitReport.Site("s.Three.run", 40 * MS, 1, 40 * MS, List.of()));
+        final WaitReport r = new WaitReport(window(), "the innermost frame outside the JDK", 200 * MS, 14, 0,
+                List.of(new WaitReport.Monitor(WaitReport.Kind.WAIT, "q.Queue", 200 * MS, 14, 40 * MS, sites)));
+        final String text = Text.waits(r, 15, 1);
+        final String html = Html.waits(r, 15, 1);
+        assertTrue(text.contains("Waited     200 ms across 14 waits on 1 class\n"), text);
+        assertTrue(html.contains("200 ms across 14 waits on 1 class"), html);
+        assertTrue(text.contains("100 ms       3  (2 more sites, --sites to list them)\n"), text);
+        assertTrue(html.contains("(2 more sites, --sites to list them)"), html);
+        assertFalse(text.contains("s.Two.run"), text);
+        assertTrue(text.contains("10.0 ms       2    (2 more below)\n"), text);
+        assertTrue(html.contains("a.A.a 40.0 ms / 4, b.B.b 30.0 ms / 3, c.C.c 20.0 ms / 2, 2 more 10.0 ms / 2"), html);
     }
 }

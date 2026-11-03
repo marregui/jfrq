@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 
 import dev.jfrq.core.jfr.RecordingInfo;
+import dev.jfrq.core.util.Count;
 
 /**
  * Which processes the JVM started, from {@code jdk.ProcessStart}: every list ranked by starts,
@@ -23,7 +24,10 @@ import dev.jfrq.core.jfr.RecordingInfo;
 public record ProcessReport(RecordingInfo info, long starts, String siteKey, List<Command> commands,
         List<Family> families) {
 
-    /** Threads and sites listed under each command, and commands beside each family, by text and HTML. */
+    /**
+     * Threads and sites listed under each command, and commands beside each family, by text and HTML
+     * ({@code Listing.listed}); the rest are summed as one entry.
+     */
     public static final int SHOWN = 3;
 
     /** What a command line with no first word is called. */
@@ -47,34 +51,13 @@ public record ProcessReport(RecordingInfo info, long starts, String siteKey, Lis
     }
 
     /**
-     * {@code folder-poll 400, kit-jobs 21, 2 more 3}: the first {@link #SHOWN} of {@code counts} and the
-     * rest summed, as text and HTML print the threads, sites and commands of a row.
-     */
-    public static String listed(final List<Count> counts) {
-        final StringBuilder sb = new StringBuilder();
-        long rest = 0;
-        for (int i = 0; i < counts.size(); i++) {
-            final Count c = counts.get(i);
-            if (i < SHOWN) {
-                sb.append(i > 0 ? ", " : "").append(c.name()).append(' ').append(c.starts());
-            } else {
-                rest += c.starts();
-            }
-        }
-        if (rest > 0) {
-            sb.append(", ").append(counts.size() - SHOWN).append(" more ").append(rest);
-        }
-        return sb.toString();
-    }
-
-    /**
      * One command: the basename of the first word of its command line.
      *
      * @param command the name, {@code git}, or {@link #EMPTY}
      * @param starts  how many times it was started
      * @param example the earliest command line under this name, whole
-     * @param threads its starts by thread family
-     * @param sites   its starts by the frame the site key names in the starting stack
+     * @param threads its starts by thread family, a count each
+     * @param sites   its starts by the frame the site key names in the starting stack, a count each
      */
     public record Command(String command, long starts, String example, List<Count> threads, List<Count> sites) {
     }
@@ -88,9 +71,5 @@ public record ProcessReport(RecordingInfo info, long starts, String siteKey, Lis
      * @param commands its starts by command
      */
     public record Family(String name, int threads, long starts, List<Count> commands) {
-    }
-
-    /** A name, a family, a command or a frame, and how many starts it accounts for. */
-    public record Count(String name, long starts) {
     }
 }

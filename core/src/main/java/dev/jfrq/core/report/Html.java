@@ -17,7 +17,6 @@ import java.util.regex.Pattern;
 
 import dev.jfrq.core.alloc.AllocationDiff;
 import dev.jfrq.core.alloc.AllocationReport;
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.Nulls;
 import dev.jfrq.core.health.HealthReport;
 import dev.jfrq.core.hot.HotReport;
@@ -25,6 +24,7 @@ import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.locks.ContentionReport;
 import dev.jfrq.core.locks.Wait;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.procs.ProcessReport;
@@ -35,7 +35,9 @@ import dev.jfrq.core.stalls.StallReport;
 import dev.jfrq.core.stalls.Timeline.Pause;
 import dev.jfrq.core.util.Bytes;
 import dev.jfrq.core.util.ClassNames;
+import dev.jfrq.core.util.Count;
 import dev.jfrq.core.util.Durations;
+import dev.jfrq.core.util.Listing;
 import dev.jfrq.core.waits.WaitReport;
 
 /**
@@ -396,44 +398,30 @@ public final class Html {
         }
         p.kv("Samples", r.samples() + " of threads running Java code, in " + r.groups().size()
                 + (r.groups().size() == 1 ? " family" : " families"));
-        p.kv("Sites", "a site is " + r.siteKey() + "; below it, the outermost frame outside the JDK under the site, "
-                + "else the frame the site called");
+        p.kv("Sites", Listing.sites(r.siteKey()));
         p.h2("By thread family");
         p.tableStart("Family", "Threads", "Samples", "Share", "Site", "Site samples", "Below");
         for (final HotReport.Group g : Json.top(r.groups(), top)) {
             boolean first = true;
-            long rest = g.samples();
             for (final HotReport.Site site : Json.top(g.sites(), sites)) {
-                final StringBuilder below = new StringBuilder();
-                long under = site.samples();
-                for (final HotReport.Count c : Json.top(site.next(), HotReport.NEXT_SHOWN)) {
-                    if (!below.isEmpty()) {
-                        below.append(", ");
-                    }
-                    below.append(c.frame()).append(' ').append(c.samples());
-                    under -= c.samples();
-                }
-                if (under > 0) {
-                    below.append(", ").append(site.next().size() - HotReport.NEXT_SHOWN).append(" more ").append(under);
-                }
                 p.row(first ? g.name() : "", first ? g.threads() : "", first ? g.samples() : "",
-                        first ? pct(r.share(g.samples())) : "", site.frame(), site.samples(), below);
+                        first ? pct(r.share(g.samples())) : "", site.frame(), site.samples(),
+                        Listing.listed(site.next(), Listing.BELOW_SHOWN));
                 first = false;
-                rest -= site.samples();
             }
-            if (rest > 0) {
-                p.row("", "", "", "", "(" + (g.sites().size() - sites) + " more sites, --sites to list them)", rest,
-                        "");
+            if (g.sites().size() > sites) {
+                p.row("", "", "", "", "(" + Listing.more(g.sites().size() - sites, "sites", "--sites") + ")",
+                        Listing.rest(g.sites(), sites, HotReport.Site::samples), "");
             }
         }
         if (r.groups().size() > top) {
-            p.row("(" + (r.groups().size() - top) + " more families, --top to list them)", "", "", "", "", "", "");
+            p.row("(" + Listing.more(r.groups().size() - top, "families", "--top") + ")", "", "", "", "", "", "");
         }
         p.tableEnd();
         p.h2("Leaf methods");
         p.tableStart("Samples", "Share", "Method");
-        for (final HotReport.Count c : Json.top(r.leaves(), top)) {
-            p.row(c.samples(), pct(r.share(c.samples())), c.frame());
+        for (final Count c : Json.top(r.leaves(), top)) {
+            p.row(c.count(), pct(r.share(c.count())), c.name());
         }
         p.tableEnd();
         p.h2("Timeline (samples per " + Durations.format(r.bucketNanos()) + ", UTC)");
@@ -470,26 +458,28 @@ public final class Html {
         p.tableStart("Starts", "Per min", "Command", "Threads", "Sites", "Example");
         for (final ProcessReport.Command c : Json.top(r.commands(), top)) {
             p.row(c.starts(), r.perMinuteText(c.starts()), c.command(),
-                    ProcessReport.listed(c.threads()), ProcessReport.listed(c.sites()), c.example());
+                    Listing.listed(c.threads(), ProcessReport.SHOWN), Listing.listed(c.sites(), ProcessReport.SHOWN),
+                    c.example());
         }
         if (r.commands().size() > top) {
-            p.row("", "", "(" + (r.commands().size() - top) + " more commands, --top to list them)", "", "", "");
+            p.row("", "", "(" + Listing.more(r.commands().size() - top, "commands", "--top") + ")", "", "", "");
         }
         p.tableEnd();
         p.h2("By thread family");
         p.tableStart("Starts", "Per min", "Family", "Threads", "Commands");
         for (final ProcessReport.Family f : Json.top(r.families(), top)) {
             p.row(f.starts(), r.perMinuteText(f.starts()), f.name(), f.threads(),
-                    ProcessReport.listed(f.commands()));
+                    Listing.listed(f.commands(), ProcessReport.SHOWN));
         }
         if (r.families().size() > top) {
-            p.row("", "", "(" + (r.families().size() - top) + " more families, --top to list them)", "", "");
+            p.row("", "", "(" + Listing.more(r.families().size() - top, "families", "--top") + ")", "", "");
         }
         p.tableEnd();
         return p.finish();
     }
 
-    public static String waits(final WaitReport r, final int top) {
+    /** {@code jfrq waits}: the same table as the text, cut to the same limits; {@code sites} per class. */
+    public static String waits(final WaitReport r, final int top, final int sites) {
         final Page p = new Page("jfrq waits", r.info());
         settingsKv(p, r.info(), "Thresholds", "jdk.JavaMonitorWait", "jdk.ThreadPark");
         if (r.waits() == 0) {
@@ -497,48 +487,32 @@ public final class Html {
                     + "settings, for waits above the thresholds; check --thread and --monitor against 'jfrq info'.");
             return p.finish();
         }
-        p.kv("Waited", Durations.format(r.totalNanos()) + " across " + r.waits() + (r.waits() == 1 ? " wait" : " waits")
-                + (r.clipped() > 0 ? "; " + r.clipped() + " began before the recording or outlived it, and count "
-                + "only the part inside it" : ""));
-        p.kv("Sites", "a site is " + r.siteKey() + "; below it, the outermost frame outside the JDK under the site, "
-                + "else the frame the site called");
+        p.kv("Waited", r.summary());
+        if (r.clipped() > 0) {
+            p.kv("Note", r.clippedNote());
+        }
+        p.kv("Sites", Listing.sites(r.siteKey()));
         p.h2("By class waited on");
         p.tableStart("Event", "Class", "Total", "Waits", "Max", "Site", "Site total", "Site waits", "Below");
         for (final WaitReport.Monitor m : Json.top(r.classes(), top)) {
             boolean first = true;
-            for (final WaitReport.Site site : Json.top(m.sites(), top)) {
-                final StringBuilder below = new StringBuilder();
-                long underWaits = site.waits();
-                for (final WaitReport.Below b : Json.top(site.below(), WaitReport.BELOW_SHOWN)) {
-                    if (!below.isEmpty()) {
-                        below.append(", ");
-                    }
-                    below.append(b.frame()).append(' ').append(Durations.format(b.totalNanos())).append(" / ")
-                            .append(b.waits());
-                    underWaits -= b.waits();
-                }
-                if (underWaits > 0) {
-                    below.append(", ").append(site.below().size() - WaitReport.BELOW_SHOWN).append(" more");
-                }
+            for (final WaitReport.Site site : Json.top(m.sites(), sites)) {
                 p.row(first ? m.kind().label() : "", first ? ClassNames.pretty(m.className()) : "",
                         first ? Durations.format(m.totalNanos()) : "", first ? m.waits() : "",
                         first ? Durations.format(m.maxNanos()) : "", site.frame(), Durations.format(site.totalNanos()),
-                        site.waits(), below);
+                        site.waits(), Listing.listed(site.below(), Listing.BELOW_SHOWN, WaitReport.Below::frame,
+                                below -> Durations.format(Listing.sum(below, WaitReport.Below::totalNanos)) + " / "
+                                        + Listing.sum(below, WaitReport.Below::waits)));
                 first = false;
             }
-            if (m.sites().size() > top) {
-                long restNanos = m.totalNanos();
-                long restWaits = m.waits();
-                for (final WaitReport.Site site : Json.top(m.sites(), top)) {
-                    restNanos -= site.totalNanos();
-                    restWaits -= site.waits();
-                }
-                p.row("", "", "", "", "", "(" + (m.sites().size() - top) + " more sites, --top to list them)",
-                        Durations.format(restNanos), restWaits, "");
+            if (m.sites().size() > sites) {
+                p.row("", "", "", "", "", "(" + Listing.more(m.sites().size() - sites, "sites", "--sites") + ")",
+                        Durations.format(Listing.rest(m.sites(), sites, WaitReport.Site::totalNanos)),
+                        Listing.rest(m.sites(), sites, WaitReport.Site::waits), "");
             }
         }
         if (r.classes().size() > top) {
-            p.row("(" + (r.classes().size() - top) + " more classes, --top to list them)", "", "", "", "", "", "", "",
+            p.row("(" + Listing.more(r.classes().size() - top, "classes", "--top") + ")", "", "", "", "", "", "", "",
                     "");
         }
         p.tableEnd();
@@ -595,7 +569,8 @@ public final class Html {
             }
             p.row(r.key(), Bytes.format(r.bytes()), report.counted(r.key()).map(Bytes::format).orElse(""),
                     Bytes.rate(report.rate(r.bytes())), pct(r.share()), AllocationReport.Support.withVirtual(
-                    report.support().thread(r.key()), r.bytes(), report.support().virtualBytesOfThread(r.key())),
+                    report.support().samplesOfThread(r.key()), r.bytes(),
+                    report.support().virtualBytesOfThread(r.key())),
                     classes);
         }
         p.tableEnd();
@@ -604,7 +579,7 @@ public final class Html {
         p.tableStart("Class", "Bytes", "Rate", "Share", "Samples");
         for (final AllocationReport.Row<String> r : report.classes(top)) {
             p.row(ClassNames.pretty(r.key()), Bytes.format(r.bytes()), Bytes.rate(report.rate(r.bytes())),
-                    pct(r.share()), AllocationReport.Support.withVirtual(report.support().className(r.key()),
+                    pct(r.share()), AllocationReport.Support.withVirtual(report.support().samplesOfClass(r.key()),
                     r.bytes(), report.support().virtualBytesOfClass(r.key())));
         }
         p.tableEnd();
@@ -853,10 +828,11 @@ public final class Html {
         final AllocationReport.Support before = diff.baseline().support();
         final AllocationReport.Support after = diff.current().support();
         p.h2("By thread");
-        deltaTable(p, "Thread", diff.threads(top), k -> k, k -> before.thread(k) + " -> " + after.thread(k));
+        deltaTable(p, "Thread", diff.threads(top), k -> k,
+                k -> before.samplesOfThread(k) + " -> " + after.samplesOfThread(k));
         p.h2("By class");
         deltaTable(p, "Class", diff.classes(top), ClassNames::pretty,
-                k -> before.className(k) + " -> " + after.className(k));
+                k -> before.samplesOfClass(k) + " -> " + after.samplesOfClass(k));
         if (!sites) {
             return p.finish();
         }

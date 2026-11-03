@@ -6,13 +6,13 @@ package dev.jfrq.core.stalls;
 import java.util.ArrayList;
 import java.util.List;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
 import dev.jfrq.core.coll.ObjList;
 import dev.jfrq.core.coll.ObjLongHashMap;
 import dev.jfrq.core.coll.ObjObjHashMap;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Timeline.Sample;
@@ -204,8 +204,8 @@ final class Bystanders {
         private final Series java = new Series();
         private final Series inNative = new Series();
 
-        void add(final long time, final Stack stack, final boolean isInNative) {
-            (isInNative ? inNative : java).add(time, stack);
+        void add(final long timeNanos, final Stack stack, final boolean isInNative) {
+            (isInNative ? inNative : java).add(timeNanos, stack);
         }
     }
 
@@ -228,8 +228,8 @@ final class Bystanders {
         /** Samples the questions have read one by one, before {@link #busyBefore} was built. */
         private long read;
 
-        void add(final long time, final Stack stack) {
-            times.add(time);
+        void add(final long timeNanos, final Stack stack) {
+            times.add(timeNanos);
             stacks.add(stack);
         }
 
@@ -281,19 +281,19 @@ final class Bystanders {
             final int n = times.size();
             long budget = (long) INSERTION_MOVES_PER_SAMPLE * n;
             for (int i = 1; i < n; i++) {
-                final long time = times.getQuick(i);
-                if (time >= times.getQuick(i - 1)) {
+                final long timeNanos = times.getQuick(i);
+                if (timeNanos >= times.getQuick(i - 1)) {
                     continue;
                 }
                 final Stack stack = stacks.getQuick(i);
                 int j = i - 1;
-                while (j >= 0 && times.getQuick(j) > time) {
+                while (j >= 0 && times.getQuick(j) > timeNanos) {
                     times.setQuick(j + 1, times.getQuick(j));
                     stacks.setQuick(j + 1, stacks.getQuick(j));
                     j--;
                     budget--;
                 }
-                times.setQuick(j + 1, time);
+                times.setQuick(j + 1, timeNanos);
                 stacks.setQuick(j + 1, stack);
                 if (budget < 0) {
                     return false;

@@ -15,10 +15,10 @@ import dev.jfrq.core.model.ThreadRef;
  * @param nativeSamples its samples in native code inside the stall, none of them idle
  * @param frame         the innermost frame most of those samples had, without its line
  * @param frameSamples  how many of them had it
- * @param site          under {@code --app}, the site that frame's samples name; {@code null} otherwise
+ * @param siteOrNull    under {@code --app}, the site that frame's samples name; {@code null} otherwise
  */
 public record Meanwhile(ThreadRef thread, int javaSamples, int nativeSamples, String frame, int frameSamples,
-                        String site) {
+                        String siteOrNull) {
 
     /** What both renderers put above these threads: they are not a holder, and must not read as one. */
     public static final String LABEL = "seen running meanwhile (a correlation, not a recorded holder)";
@@ -42,8 +42,8 @@ public record Meanwhile(ThreadRef thread, int javaSamples, int nativeSamples, St
         sb.append(samples() == 1 ? " sample in "
                 : frameSamples == samples() ? " samples, all in " : " samples, " + frameSamples + " of them in ")
                 .append(frame);
-        if (site != null && !site.equals(frame)) {
-            sb.append(", site ").append(site);
+        if (siteOrNull != null && !siteOrNull.equals(frame)) {
+            sb.append(", site ").append(siteOrNull);
         }
         return sb.toString();
     }

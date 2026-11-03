@@ -14,11 +14,12 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import dev.jfrq.core.alloc.SiteKey;
 import dev.jfrq.core.coll.LongList;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Stall.Evidence;
@@ -770,9 +771,9 @@ class StallAnalysisTest {
                 new Frame("dev.app.Loop", "retryWithBackoff", 77, "JIT compiled"),
                 new Frame("dev.app.Loop", "run", 20, "JIT compiled"));
         final List<Block> parks = List.of(
-                blockWith(1_000, 3_000, BlockKind.PARK, ParkShapes.NO_BLOCKER, backoff),
-                blockWith(4_000, 6_000, BlockKind.PARK, ParkShapes.NO_BLOCKER, backoff),
-                blockWith(7_000, 9_000, BlockKind.PARK, ParkShapes.NO_BLOCKER, backoff));
+                blockWith(1_000, 3_000, BlockKind.PARK, Absent.NO_BLOCKER, backoff),
+                blockWith(4_000, 6_000, BlockKind.PARK, Absent.NO_BLOCKER, backoff),
+                blockWith(7_000, 9_000, BlockKind.PARK, Absent.NO_BLOCKER, backoff));
         final StallReport r = new StallAnalysis(50 * MS).analyse(sampledInfo(),
                 List.of(new ThreadTimeline(LOOP, List.of(), parks)), List.of());
         assertEquals(3, r.stalls().size(), r.stalls().toString());
@@ -1177,8 +1178,8 @@ class StallAnalysisTest {
         samples.addAll(idle(1_600, 2_000, 10));
         final List<Block> blocks = new ArrayList<>();
         for (int k = 0; k < 15; k++) {
-            blocks.add(block(1_000 + 20L * k, 1_012 + 20L * k, BlockKind.PARK, ParkShapes.NO_BLOCKER, null));
-            blocks.add(block(1_450 + 10L * k, 1_458 + 10L * k, BlockKind.PARK, ParkShapes.NO_BLOCKER, null));
+            blocks.add(block(1_000 + 20L * k, 1_012 + 20L * k, BlockKind.PARK, Absent.NO_BLOCKER, null));
+            blocks.add(block(1_450 + 10L * k, 1_458 + 10L * k, BlockKind.PARK, Absent.NO_BLOCKER, null));
         }
         blocks.add(new Block(new Interval(1_300 * MS, 1_450 * MS), BlockKind.SOCKET_READ, "from backend:9000", Stack.EMPTY, 6));
         blocks.sort(Comparator.comparing(Block::interval));

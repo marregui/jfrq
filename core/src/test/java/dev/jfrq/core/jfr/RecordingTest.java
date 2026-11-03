@@ -312,8 +312,8 @@ class RecordingTest {
             perClass += n;
         }
         assertEquals(report.samples(), perClass, report.support().byClass().toString());
-        assertTrue(report.support().className("[B") > 0);
-        assertTrue(report.support().thread("alloc-thread") > 0);
+        assertTrue(report.support().samplesOfClass("[B") > 0);
+        assertTrue(report.support().samplesOfThread("alloc-thread") > 0);
         assertEquals(report.samples(), report.support().byThread().values().stream().mapToLong(Long::longValue).sum());
         assertThrows(IllegalStateException.class, () -> new AllocationCollector().report());
     }

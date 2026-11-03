@@ -8,9 +8,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.jfrq.core.alloc.SiteKey;
+import dev.jfrq.core.jfr.Absent;
 import dev.jfrq.core.model.Frame;
 import dev.jfrq.core.model.Interval;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.model.ThreadRef;
 import dev.jfrq.core.stalls.Stall.LockHolder;
@@ -125,7 +126,7 @@ class MeanwhileTest {
         final Interval at = new Interval(0, 100 * MS);
         assertEquals(LockHolder.UNRECORDED, LockHolder.of(new Block(at, BlockKind.PARK, "on X@1", LOCKING, false)));
         assertEquals(LockHolder.NOT_A_LOCK,
-                LockHolder.of(new Block(at, BlockKind.PARK, ParkShapes.NO_BLOCKER, LOCKING, false)));
+                LockHolder.of(new Block(at, BlockKind.PARK, Absent.NO_BLOCKER, LOCKING, false)));
         assertEquals(LockHolder.KNOWN, LockHolder.of(new Block(at, BlockKind.MONITOR, "X@1", LOCKING, HOLDER)));
         assertEquals(LockHolder.UNRECORDED, LockHolder.of(new Block(at, BlockKind.MONITOR, "X@1", LOCKING, null)));
         for (final BlockKind kind : List.of(BlockKind.OBJECT_WAIT, BlockKind.SLEEP, BlockKind.SOCKET_READ,
@@ -198,7 +199,7 @@ class MeanwhileTest {
     @Test
     void aWaitOnNothingAnyoneHoldsNamesNobody() {
         final ThreadTimeline painter = new ThreadTimeline(PAINTER, samples(1_000, 2_000, 50, BLIT, true), List.of());
-        final Block noObject = new Block(new Interval(1_000 * MS, 2_000 * MS), BlockKind.PARK, ParkShapes.NO_BLOCKER,
+        final Block noObject = new Block(new Interval(1_000 * MS, 2_000 * MS), BlockKind.PARK, Absent.NO_BLOCKER,
                 LOCKING, false);
         assertTrue(loopStall(parkedWhile(noObject, painter)).meanwhile().isEmpty());
         final Block sleep = new Block(new Interval(1_000 * MS, 2_000 * MS), BlockKind.SLEEP, "", SLEEPING, false);
@@ -300,7 +301,7 @@ class MeanwhileTest {
                 SiteKey.inPackages(List.of("dev.app")));
         bystanders.add(PAINTER, flat(samples(100, 130, 10, BLIT, true)));
         final Meanwhile m = bystanders.during(LOOP, new Interval(100 * MS, 200 * MS)).getFirst();
-        assertEquals("dev.app.Renderer.flush", m.site());
+        assertEquals("dev.app.Renderer.flush", m.siteOrNull());
         assertEquals("painter: 3 native samples, all in sun.java2d.metal.MTLLayer.blitTexture, site "
                 + "dev.app.Renderer.flush", m.describe());
     }

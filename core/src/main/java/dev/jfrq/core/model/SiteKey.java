@@ -1,16 +1,14 @@
 // Copyright (C) 2026 Miguel Arregui
 // SPDX-License-Identifier: Apache-2.0
 
-package dev.jfrq.core.alloc;
+package dev.jfrq.core.model;
 
 import java.util.List;
 
-import dev.jfrq.core.model.Frame;
-import dev.jfrq.core.model.Stack;
-
 /**
- * What an allocation stack is called when sites are ranked, and therefore which stacks are
- * one row.
+ * What a stack is called when sites are ranked, and therefore which stacks are one row:
+ * {@code alloc --sites}, {@code hot}, {@code procs}, {@code waits} and the sites of
+ * {@code stalls} share it.
  *
  * <p>A single logical allocation reaches the sampler down many different paths: the same
  * method allocating on two of its lines, the same line reached through a different depth of
@@ -50,6 +48,15 @@ public interface SiteKey {
     default String of(final Stack stack) {
         final int index = frameIndex(stack);
         return index < 0 ? NO_STACK : method(stack.frameQuick(index));
+    }
+
+    /**
+     * Whether this key was asked for with {@code --app}: it names the innermost frame in the
+     * packages given rather than the default culprit. A command whose output differs under
+     * {@code --app} reads this, not the key's identity.
+     */
+    default boolean fromApp() {
+        return false;
     }
 
     /** What the rows are, in the words the report prints above them. */
@@ -104,6 +111,11 @@ public interface SiteKey {
                     }
                 }
                 return CULPRIT_METHOD.frameIndex(stack);
+            }
+
+            @Override
+            public boolean fromApp() {
+                return true;
             }
 
             @Override

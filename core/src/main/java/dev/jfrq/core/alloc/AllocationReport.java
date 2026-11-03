@@ -13,6 +13,7 @@ import java.util.Optional;
 
 import dev.jfrq.core.jfr.RecordingInfo;
 import dev.jfrq.core.model.Frame;
+import dev.jfrq.core.model.SiteKey;
 import dev.jfrq.core.model.Stack;
 import dev.jfrq.core.util.Bytes;
 
@@ -112,9 +113,9 @@ public record AllocationReport(
     /**
      * Samples per key, alongside the bytes. The estimate weights every sample by the bytes
      * it stands for, so two rows of equal size can rest on 2 000 samples and on 3; only the
-     * count says which. The {@code virtual} maps count the samples among those taken on
-     * virtual threads: such a sample is weighed by what its carrier allocated since the
-     * carrier was last sampled, whichever thread did it, so a row resting on them can be far
+     * count says which. The {@code virtualBytes} maps hold, per key, the bytes of the samples
+     * taken on virtual threads: such a sample is weighed by what its carrier allocated since
+     * the carrier was last sampled, whichever thread did it, so that part of a row can be far
      * from what its own code allocated ({@link #warnings()}).
      */
     public record Support(Map<String, Long> byThread, Map<String, Long> byClass, Map<Stack, Long> bySite,
@@ -131,7 +132,7 @@ public record AllocationReport(
         /**
          * {@code samples} as text and HTML print them, with the share of the row's {@code bytes}
          * that came from samples taken on virtual threads: {@code 84}, {@code 84 (all virtual)},
-         * {@code 482 (93% virtual)}. Bytes, not samples: one heavy virtual sample can carry most
+         * {@code 482 (95% virtual)}. Bytes, not samples: one heavy virtual sample can carry most
          * of a row that has hundreds of light ones.
          */
         public static String withVirtual(final long samples, final long bytes, final long virtualBytes) {
@@ -162,15 +163,15 @@ public record AllocationReport(
             return virtualBytesBySite.getOrDefault(stack, 0L);
         }
 
-        public long thread(final String name) {
+        public long samplesOfThread(final String name) {
             return byThread.getOrDefault(name, 0L);
         }
 
-        public long className(final String name) {
+        public long samplesOfClass(final String name) {
             return byClass.getOrDefault(name, 0L);
         }
 
-        public long site(final Stack stack) {
+        public long samplesOfSite(final Stack stack) {
             return bySite.getOrDefault(stack, 0L);
         }
     }
@@ -368,7 +369,7 @@ public record AllocationReport(
         final Map<String, Fold> folds = new HashMap<>();
         for (final Map.Entry<Stack, Long> e : bySite.entrySet()) {
             folds.computeIfAbsent(key.of(e.getKey()), _ -> new Fold())
-                    .add(e.getKey(), e.getValue(), support.site(e.getKey()),
+                    .add(e.getKey(), e.getValue(), support.samplesOfSite(e.getKey()),
                             support.virtualBytesOfSite(e.getKey()));
         }
         final double total = Math.max(totalBytes, 1);
