@@ -39,6 +39,7 @@ import dev.jfrq.cli.Args;
 import dev.jfrq.cli.Main;
 import dev.jfrq.core.jfr.JfrReader;
 import dev.jfrq.core.jfr.RecordingInfo;
+import dev.jfrq.core.report.JsonParser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -195,22 +196,24 @@ class LiveTest {
         final Instant begin = Instant.parse("2026-09-24T10:00:00Z");
         final Instant end = begin.plusSeconds(60);
         final Window window = new Window(begin, null);
-        assertEquals(List.of(), Live.span(window, begin, end, begin.minusSeconds(600).toEpochMilli(), "max-age 5m00s"));
+        assertEquals(List.of(), Dumps.span(window, begin, end, begin.minusSeconds(600).toEpochMilli(),
+                "max-age 5m00s"));
         // An 'again' of a full dump whose first chunks have aged out since.
-        final List<String> aged = Live.span(window, begin.plusSeconds(20), end, begin.minusSeconds(600).toEpochMilli(),
+        final List<String> aged = Dumps.span(window, begin.plusSeconds(20), end, begin.minusSeconds(600).toEpochMilli(),
                 "max-age 5m00s");
         assertEquals(1, aged.size());
         assertTrue(aged.getFirst().contains("20.0 s after the window: the JVM had already discarded that data (max-age 5m00s)"),
                 aged.getFirst());
         // A delta whose cursor predates the recording: it was stopped and started again.
-        final List<String> restarted = Live.span(window, begin.plusSeconds(20), end, begin.plusSeconds(19).toEpochMilli(),
-                "no bound");
+        final List<String> restarted = Dumps.span(window, begin.plusSeconds(20), end,
+                begin.plusSeconds(19).toEpochMilli(), "no bound");
         assertEquals(1, restarted.size());
         assertTrue(restarted.getFirst().contains("the recording started at " + TIME.format(begin.plusSeconds(19))),
                 restarted.getFirst());
         assertFalse(restarted.getFirst().contains("discarded"), restarted.getFirst());
-        assertTrue(Live.span(window, begin.minusSeconds(5), end, 0, "no bound").getFirst().contains("before the window"));
-        assertTrue(Live.span(new Window(begin, end.minusSeconds(5)), begin, end, 0, "no bound").getFirst()
+        assertTrue(Dumps.span(window, begin.minusSeconds(5), end, 0, "no bound").getFirst()
+                .contains("before the window"));
+        assertTrue(Dumps.span(new Window(begin, end.minusSeconds(5)), begin, end, 0, "no bound").getFirst()
                 .contains("after the window: the JVM hands over whole chunks"));
     }
 
@@ -220,6 +223,9 @@ class LiveTest {
                 Live.failure(new UndeclaredThrowableException(new IOException("Connection refused"))));
         assertEquals("failed: java.lang.UnsupportedOperationException: no",
                 Live.failure(new UnsupportedOperationException("no")));
+        // A checked failure is its message, as jfrq describes it, with no prefix for a caller to double.
+        assertEquals("the JVM did not answer a sample in 10.0 s",
+                Live.failure(new IOException("the JVM did not answer a sample in 10.0 s")));
         // A connection that will not close after a good answer is a warning, not a failure.
         final ByteArrayOutputStream err = new ByteArrayOutputStream();
         final Live live = new Live(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
@@ -617,9 +623,10 @@ class LiveTest {
         final Path t1c = dir.resolve("t1c.jfr");
         final Run json = run(concat(new String[] {PID, "again", "--out", t1c.toString()}, pick, "--", "info", "--json"));
         assertEquals(0, json.status(), json.err());
-        assertTrue(json.out().startsWith("{\"tool\":\"jfrq\","), json.out());
         assertTrue(json.out().endsWith("}\n"), json.out());
-        assertTrue(json.out().contains("\"command\":\"info\""), json.out());
+        final Map<String, Object> doc = JsonParser.object(json.out());
+        assertEquals("jfrq", doc.get("tool"), json.out());
+        assertEquals("info", doc.get("command"), json.out());
         assertTrue(json.err().contains("Dumped     " + t1c), json.err());
         assertTrue(json.err().contains("Cursor     next delta from"), json.err());
 

@@ -141,11 +141,7 @@ public final class Jvm implements Closeable {
             // Idempotent: a JVM whose agent is already running answers with the same address.
             address = vm.startLocalManagementAgent();
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                vm.detach();
-            } catch (final IOException | RuntimeException | Error d) {
-                e.addSuppressed(d);
-            }
+            Closing.after(e, vm::detach);
             throw e;
         }
         vm.detach();
@@ -158,11 +154,7 @@ public final class Jvm implements Closeable {
                     ManagementFactory.RUNTIME_MXBEAN_NAME, RuntimeMXBean.class);
             return new Jvm(pid, connector, mbsc, fr, runtime);
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                connector.close();
-            } catch (final IOException | RuntimeException | Error c) {
-                e.addSuppressed(c);
-            }
+            Closing.after(e, connector::close);
             throw e;
         }
     }
@@ -185,8 +177,8 @@ public final class Jvm implements Closeable {
     }
 
     /**
-     * What the JVM says about itself now, over the same connection: four round trips (the
-     * OS, memory and thread MBeans, and the clock is this side's). A value the platform does
+     * What the JVM says about itself now, over the same connection: three round trips, one each
+     * to the OS, memory and thread MBeans; the clock is this side's. A value the platform does
      * not report (open file descriptors on Windows, a CPU load not yet known) is -1. The
      * resident set size is in no MBean.
      *

@@ -19,6 +19,7 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":cli"))
     testImplementation(libs.junit.jupiter)
+    testImplementation(testFixtures(project(":core")))
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

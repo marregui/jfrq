@@ -34,8 +34,6 @@ import jdk.management.jfr.RecordingInfo;
 
 import dev.jfrq.cli.Args;
 import dev.jfrq.cli.Main;
-import dev.jfrq.core.jfr.Chunks;
-import dev.jfrq.core.util.Bytes;
 import dev.jfrq.core.util.Durations;
 
 /**
@@ -133,12 +131,6 @@ public final class Live {
             shorter than asked. exit status: 0 ok, 1 the JVM or the dump failed, 2 usage error
             """.formatted(Main.VERSION);
 
-    /**
-     * Every time jfrq-live prints is UTC and says so, as jfrq's own header does: a dump is read
-     * on other machines and next to other tools, and a clock time without a zone is a guess.
-     */
-    static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'",
-            Locale.ROOT).withZone(ZoneOffset.UTC);
     private static final String DEFAULT_NAME = "jfrq-live";
     private static final DateTimeFormatter DIR_STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.ROOT)
             .withZone(ZoneOffset.UTC);
@@ -146,10 +138,6 @@ public final class Live {
             .withZone(ZoneOffset.UTC);
     private static final Set<String> FLAGS = Set.of("help", "version");
     private static final Pattern SIZE = Pattern.compile("\\s*(\\d+)\\s*([kKmMgGtT]?)[bB]?\\s*");
-    /** Chunk boundaries are why a file and its window differ by a little; more than this is worth a line. */
-    private static final Duration SLACK = Duration.ofSeconds(1);
-    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss.SSS'Z'", Locale.ROOT)
-            .withZone(ZoneOffset.UTC);
 
     private final PrintStream err;
     private final PrintStream out;
@@ -175,12 +163,6 @@ public final class Live {
      */
     static void line(final PrintStream stream, final String text) {
         stream.print(text + '\n');
-    }
-
-    /** {@code 14:03:07.121Z .. 14:05:12.004Z}, with "start" and "now" for the open ends. */
-    static String describe(final Window w) {
-        return (w.begin() == null ? "the start" : TIME.format(w.begin())) + " .. "
-                + (w.end() == null ? "now" : TIME.format(w.end()));
     }
 
     /** Runs a command and returns the exit status without calling {@link System#exit}. */
@@ -271,11 +253,7 @@ public final class Live {
                     default -> dump(jvm, command, args, question, file);
                 };
             } catch (final IOException | RuntimeException | Error e) {
-                try {
-                    jvm.close();
-                } catch (final IOException | RuntimeException | Error c) {
-                    e.addSuppressed(c);
-                }
+                Closing.after(e, jvm::close);
                 throw e;
             }
             release(jvm, pid);
@@ -285,7 +263,7 @@ public final class Live {
             line(err, "Run 'jfrq-live --help' for usage.");
             return 2;
         } catch (final IOException e) {
-            line(err, "jfrq-live: " + Main.describe(e));
+            line(err, "jfrq-live: " + failure(e));
             return 1;
         } catch (final IllegalArgumentException | IllegalStateException e) {
             // The recorder's own refusals: a recording in the wrong state, a setting it does not know.
@@ -305,16 +283,21 @@ public final class Live {
         try {
             connection.close();
         } catch (final IOException e) {
-            line(err, "jfrq-live: warning: the connection to JVM " + pid + " did not close cleanly: " + Main.describe(e));
+            line(err, "jfrq-live: warning: the connection to JVM " + pid + " did not close cleanly: " + failure(e));
         }
     }
 
     /**
-     * What an unchecked failure from the JMX proxy means. A method whose interface declares no
-     * {@code IOException} (most of {@link FlightRecorderMXBean}) reports a lost connection as
-     * an {@link UndeclaredThrowableException} around it.
+     * A failure as one line, the one form every message of {@code jfrq-live} uses: an
+     * {@link IOException} by its message, as {@code jfrq} describes it; a lost connection as
+     * such, which a JMX proxy method whose interface declares no {@code IOException} (most of
+     * {@link FlightRecorderMXBean}) reports as an {@link UndeclaredThrowableException} around
+     * it; anything else as {@code failed: } and the exception.
      */
-    static String failure(final RuntimeException e) {
+    static String failure(final Throwable e) {
+        if (e instanceof final IOException io) {
+            return Main.describe(io);
+        }
         Throwable cause = e;
         while (cause instanceof final UndeclaredThrowableException u && u.getUndeclaredThrowable() != null) {
             cause = u.getUndeclaredThrowable();
@@ -465,23 +448,12 @@ public final class Live {
 
     /** {@code histo}: the class histogram to {@code --out}, else to standard output. */
     private int histo(final Jvm jvm, final Args args) throws IOException {
-        final String text = jvm.classHistogram(Watch.HISTO_TIMEOUT);
         final Optional<String> to = args.option("out");
         if (to.isEmpty()) {
-            out.print(text);
+            out.print(jvm.classHistogram(Dumps.HISTO_TIMEOUT));
             return 0;
         }
-        final Path file = Path.of(to.orElseThrow());
-        Files.writeString(file, text, StandardCharsets.UTF_8);
-        final Histogram h = Histogram.parse(text, file.toString());
-        long instances = 0;
-        long bytes = 0;
-        for (final long[] counts : h.classes().values()) {
-            instances += counts[0];
-            bytes += counts[1];
-        }
-        line(out, String.format(Locale.ROOT, "Histogram  %s  %,d classes, %,d instances, %s, counted after a full GC",
-                file, h.classes().size(), instances, Bytes.format(bytes)));
+        Dumps.histogram(jvm, Dumps.HISTO_TIMEOUT, Path.of(to.orElseThrow()), out);
         return 0;
     }
 
@@ -529,7 +501,7 @@ public final class Live {
         for (final RecordingInfo r : recordings) {
             line(out, recordingLine(r));
         }
-        line(out, cursorLine(Cursor.load(stateDir(args), jvm.pid(), jvm.startTime())));
+        line(out, cursorLine(Cursor.load(Dumps.stateDir(args), jvm.pid(), jvm.startTime())));
         return 0;
     }
 
@@ -557,7 +529,7 @@ public final class Live {
         line(out, settingsLine(settings, sets));
         // What the recording ended up with, not what was asked: --max-age 0 or infinity is no bound either.
         if (started.getMaxAge() == 0 && started.getMaxSize() == 0) {
-            line(out, unboundedWarning(jvm));
+            line(out, Dumps.unboundedWarning(jvm));
         }
         return 0;
     }
@@ -631,11 +603,7 @@ public final class Live {
             fr.setRecordingOptions(id, options);
             fr.startRecording(id);
         } catch (final IOException | RuntimeException | Error e) {
-            try {
-                fr.closeRecording(id);
-            } catch (final IOException | RuntimeException | Error c) {
-                e.addSuppressed(c);
-            }
+            Closing.after(e, () -> fr.closeRecording(id));
             throw e;
         }
         return id;
@@ -686,7 +654,7 @@ public final class Live {
     private int bound(final Jvm jvm, final Args args, final Map<String, String> limits, final List<String> notes)
             throws IOException {
         final FlightRecorderMXBean fr = jvm.flightRecorder();
-        final RecordingInfo r = pick(jvm, args);
+        final RecordingInfo r = Dumps.pick(jvm, args);
         fr.setRecordingOptions(r.getId(), limits);
         line(out, recordingLine(recording(fr, r.getId())));
         for (final String note : notes) {
@@ -702,7 +670,7 @@ public final class Live {
      */
     private int stop(final Jvm jvm, final Args args) throws IOException {
         final FlightRecorderMXBean fr = jvm.flightRecorder();
-        final RecordingInfo r = pick(jvm, args);
+        final RecordingInfo r = Dumps.pick(jvm, args);
         final boolean running = "RUNNING".equals(r.getState());
         if (running) {
             fr.stopRecording(r.getId());
@@ -733,13 +701,14 @@ public final class Live {
 
     private int dump(final Jvm jvm, final String command, final Args args, final String[] question, final Path file)
             throws IOException {
-        final RecordingInfo r = pick(jvm, args);
+        final RecordingInfo r = Dumps.pick(jvm, args);
         // A named --out is the caller's to replace; a default name never replaces an earlier dump.
-        final Taken taken = take(jvm, command, r, stateDir(args), file, args.option("out").isPresent(), err);
+        final boolean replace = args.option("out").isPresent();
+        final Dumps.Taken taken = Dumps.take(jvm, command, r, Dumps.stateDir(args), file, replace, err);
         // A question that answers in JSON owns standard output: a program reads it whole, so
         // what the dump itself says goes to standard error instead of ahead of the document.
         final PrintStream to = question.length > 0 && Main.answersInJson(question) ? err : out;
-        check(taken.snapshot(), taken.chunks(), taken.window(), command, r, jvm, to);
+        Dumps.check(taken.snapshot(), taken.chunks(), taken.window(), command, r, jvm, to);
         line(to, cursorLine(taken.cursor()));
         if (question.length == 0) {
             return 0;
@@ -758,127 +727,6 @@ public final class Live {
         argv.add(file.toString());
         argv.addAll(Arrays.asList(question).subList(1, question.length));
         return argv.toArray(String[]::new);
-    }
-
-    /**
-     * A dump, the chunk headers of its file, the window it was asked for and the cursor after it.
-     */
-    record Taken(Snapshot snapshot, Chunks chunks, Window window, Cursor cursor) {
-    }
-
-    /**
-     * Takes one {@code full}, {@code delta} or {@code again} dump of recording {@code r} into
-     * {@code file} and moves the cursor kept in {@code stateDir}: what {@code jfrq-live <pid> delta}
-     * does before its question, and what each window of {@code watch} is.
-     */
-    static Taken take(final Jvm jvm, final String command, final RecordingInfo r, final Path stateDir, final Path file,
-            final boolean replace, final PrintStream err) throws IOException {
-        final FlightRecorderMXBean fr = jvm.flightRecorder();
-        final Cursor cursor;
-        final Window window;
-        final Snapshot snapshot;
-        final Chunks chunks;
-        // The lock spans reading the cursor to advancing it: two deltas in a row, not two at once.
-        try (final Closeable _ = Cursor.lock(stateDir, jvm.pid(), err)) {
-            cursor = Cursor.load(stateDir, jvm.pid(), jvm.startTime());
-            window = switch (command) {
-                case "full" -> Window.EVERYTHING;
-                case "delta" -> {
-                    if (cursor.next() == null) {
-                        throw new Args.UsageException("no cursor for JVM " + jvm.pid() + " yet: run 'full' first");
-                    }
-                    yield new Window(cursor.next(), null);
-                }
-                default -> {
-                    if (cursor.lastWindow() == null) {
-                        throw new Args.UsageException("no window to repeat for JVM " + jvm.pid()
-                                + ": run 'full' or 'delta' first");
-                    }
-                    yield cursor.lastWindow();
-                }
-            };
-            snapshot = Snapshot.take(fr, jvm.pid(), r.getId(), window, file, replace);
-            chunks = Chunks.scan(snapshot.file());
-            if (!command.equals("again")) {
-                // A full dump's window starts where its file does, so an 'again' of it can tell
-                // when the JVM has since discarded part of it.
-                final Window taken = window.begin() != null ? window
-                        : new Window(Instant.ofEpochSecond(0, chunks.startNanos()), null);
-                cursor.advance(taken, snapshot.stop());
-            }
-        }
-        return new Taken(snapshot, chunks, window, cursor);
-    }
-
-    /**
-     * The span check: what the file holds against what was asked, and why they differ when
-     * they do. The chunk headers say it all, so the dump is not parsed.
-     */
-    static void check(final Snapshot snapshot, final Chunks chunks, final Window window, final String command,
-            final RecordingInfo r, final Jvm jvm, final PrintStream to) throws IOException {
-        if (chunks.complete() == 0) {
-            throw new IOException("the dump " + snapshot.file() + " holds no complete chunk");
-        }
-        final Instant start = Instant.ofEpochSecond(0, chunks.startNanos());
-        final Instant end = Instant.ofEpochSecond(0, chunks.endNanos());
-        line(to, String.format(Locale.ROOT, "Dumped     %s  %s, %d chunk%s, %s .. %s (%s)", snapshot.file(),
-                Bytes.format(snapshot.bytes()), chunks.count(), chunks.count() == 1 ? "" : "s", TIME.format(start),
-                TIME.format(end), Durations.format(chunks.endNanos() - chunks.startNanos())));
-        if (chunks.isTruncated()) {
-            line(to, "WARNING    the file is truncated: it ends inside a chunk; " + chunks.complete()
-                    + " complete chunk(s) before it");
-        }
-        if (chunks.isInProgress()) {
-            line(to, "WARNING    the file's last chunk is not finished; jfrq will refuse it");
-        }
-        final String why = switch (command) {
-            case "full" -> "everything the recording kept";
-            case "delta" -> "since the previous dump";
-            default -> "the previous window again";
-        };
-        line(to, String.format(Locale.ROOT, "Window     %s (%s)", describe(window), why));
-        for (final String note : span(window, start, end, r.getStartTime(), bounds(r))) {
-            line(to, note);
-        }
-        if (command.equals("full") && r.getMaxAge() == 0 && r.getMaxSize() == 0) {
-            line(to, unboundedWarning(jvm));
-        }
-    }
-
-    /**
-     * How the file's span {@code [start, end]} departs from {@code window} by more than chunk
-     * granularity, and why. A file that starts late lost the window's beginning: to the
-     * recording's bounds, or, when the recording itself started after the window began (it
-     * was stopped and started again since the cursor was set), to never having recorded it.
-     */
-    static List<String> span(final Window window, final Instant start, final Instant end, final long recordingStartMillis,
-            final String bounds) {
-        final List<String> lines = new ArrayList<>();
-        if (window.begin() != null) {
-            final Duration early = Duration.between(start, window.begin());
-            if (early.compareTo(SLACK) > 0) {
-                lines.add("Note       the file starts " + Durations.format(early)
-                        + " before the window: the JVM hands over whole chunks");
-            } else if (early.negated().compareTo(SLACK) > 0) {
-                final Instant recordingStart = Instant.ofEpochMilli(recordingStartMillis);
-                if (recordingStartMillis != 0 && recordingStart.isAfter(window.begin())) {
-                    lines.add("WARNING    the file starts " + Durations.format(early.negated())
-                            + " after the window: the recording started at " + TIME.format(recordingStart)
-                            + ", after the window began, so it never held that data (stopped and started again?)");
-                } else {
-                    lines.add("WARNING    the file starts " + Durations.format(early.negated())
-                            + " after the window: the JVM had already discarded that data (" + bounds + ")");
-                }
-            }
-        }
-        if (window.end() != null) {
-            final Duration late = Duration.between(window.end(), end);
-            if (late.compareTo(SLACK) > 0) {
-                lines.add("Note       the file ends " + Durations.format(late)
-                        + " after the window: the JVM hands over whole chunks");
-            }
-        }
-        return lines;
     }
 
     /**
@@ -944,59 +792,6 @@ public final class Live {
         return n * unit;
     }
 
-    /**
-     * The recording to act on: {@code --recording} by id, or by a name only one recording
-     * has, else the JVM's single running one.
-     */
-    static RecordingInfo pick(final Jvm jvm, final Args args) throws IOException {
-        final List<RecordingInfo> all = jvm.flightRecorder().getRecordings();
-        final Optional<String> wanted = args.option("recording");
-        if (wanted.isPresent()) {
-            final String w = wanted.get();
-            final List<RecordingInfo> named = new ArrayList<>();
-            for (final RecordingInfo r : all) {
-                if (w.equals(Long.toString(r.getId()))) {
-                    return r;
-                }
-                if (w.equals(r.getName())) {
-                    named.add(r);
-                }
-            }
-            if (named.size() == 1) {
-                return named.getFirst();
-            }
-            if (named.size() > 1) {
-                final StringBuilder sb = new StringBuilder("--recording '" + w + "' names " + named.size()
-                        + " recordings; pick one by id:");
-                for (final RecordingInfo r : named) {
-                    sb.append(' ').append(r.getId()).append(" (").append(r.getState()).append(')');
-                }
-                throw new Args.UsageException(sb.toString());
-            }
-            throw new IOException("JVM " + jvm.pid() + " has no recording '" + w + "'; 'jfrq-live " + jvm.pid()
-                    + " status' lists them");
-        }
-        final List<RecordingInfo> running = new ArrayList<>();
-        for (final RecordingInfo r : all) {
-            if ("RUNNING".equals(r.getState())) {
-                running.add(r);
-            }
-        }
-        if (running.isEmpty()) {
-            throw new IOException("JVM " + jvm.pid() + " has no running recording: start one with 'jfrq-live "
-                    + jvm.pid() + " start', or run the JVM with -XX:StartFlightRecording");
-        }
-        if (running.size() > 1) {
-            final StringBuilder sb = new StringBuilder("JVM " + jvm.pid() + " has " + running.size()
-                    + " running recordings; pick one with --recording ID|NAME:");
-            for (final RecordingInfo r : running) {
-                sb.append(' ').append(r.getId()).append('=').append(r.getName());
-            }
-            throw new IOException(sb.toString());
-        }
-        return running.getFirst();
-    }
-
     private static RecordingInfo recording(final FlightRecorderMXBean fr, final long id) throws IOException {
         for (final RecordingInfo r : fr.getRecordings()) {
             if (r.getId() == id) {
@@ -1006,48 +801,25 @@ public final class Live {
         throw new IOException("the JVM lost recording " + id);
     }
 
-    static Path stateDir(final Args args) {
-        return args.option("state").map(Path::of)
-                .orElseGet(() -> Path.of(System.getProperty("user.home"), ".jfrq", "live"));
-    }
-
     private static String jvmLine(final Jvm jvm) {
         // The pid, not RuntimeMXBean.getName(): see Jvm.attach for what asking for the name costs.
         // The host it would add is always this machine, since the command takes a local pid.
         return String.format(Locale.ROOT, "JVM        %s, started %s, %s", jvm.pid(),
-                DATE_TIME.format(Instant.ofEpochMilli(jvm.startTime())), jvm.vmVersion());
+                Dumps.DATE_TIME.format(Instant.ofEpochMilli(jvm.startTime())), jvm.vmVersion());
     }
 
     private static String recordingLine(final RecordingInfo r) {
-        final String since = r.getStartTime() == 0 ? "not started" : "since " + TIME.format(Instant.ofEpochMilli(r.getStartTime()));
+        final String since = r.getStartTime() == 0 ? "not started"
+                : "since " + Dumps.TIME.format(Instant.ofEpochMilli(r.getStartTime()));
         return String.format(Locale.ROOT, "Recording  %-3d %-16s %-8s %s, %s, %s", r.getId(), r.getName(), r.getState(),
-                since, bounds(r), r.isToDisk() ? "to disk" : "in memory");
+                since, Dumps.bounds(r), r.isToDisk() ? "to disk" : "in memory");
     }
 
-    private static String bounds(final RecordingInfo r) {
-        if (r.getMaxAge() == 0 && r.getMaxSize() == 0) {
-            return "no bound";
-        }
-        final StringBuilder sb = new StringBuilder();
-        if (r.getMaxAge() != 0) {
-            sb.append("max-age ").append(Durations.format(Duration.ofSeconds(r.getMaxAge())));
-        }
-        if (r.getMaxSize() != 0) {
-            sb.append(sb.isEmpty() ? "" : ", ").append("max-size ").append(Bytes.format(r.getMaxSize()));
-        }
-        return sb.toString();
-    }
-
-    static String cursorLine(final Cursor c) {
+    private static String cursorLine(final Cursor c) {
         if (c.next() == null) {
             return "Cursor     none: 'full' sets it (" + c.file() + ")";
         }
-        return String.format(Locale.ROOT, "Cursor     next delta from %s; last window %s (%s)", TIME.format(c.next()),
-                describe(c.lastWindow()), c.file());
-    }
-
-    private static String unboundedWarning(final Jvm jvm) {
-        return "WARNING    the recording has no bound: the JVM keeps every chunk and each 'full' dump is bigger"
-                + " than the last; 'jfrq-live " + jvm.pid() + " bound --max-age 10m' keeps the recent ten minutes";
+        return String.format(Locale.ROOT, "Cursor     next delta from %s; last window %s (%s)",
+                Dumps.TIME.format(c.next()), Dumps.describe(c.lastWindow()), c.file());
     }
 }

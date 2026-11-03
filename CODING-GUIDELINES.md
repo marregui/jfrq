@@ -72,8 +72,6 @@ Not applied yet. These are not waived: findings against them are still reported;
 - G-11.7: 377 of 394 test methods and 16 of 33 test classes have no doc comment, and the 17 that do use `/** */`.
   Plan: `///` on each test as it is touched; a pass over `core` first.
 - G-10.8, line limit: 218 lines are over 120 characters. Plan: rewrap as touched; no bulk reformat.
-- G-4.3: `live` suppresses an `Error` from cleanup in 7 places (for example `Snapshot.chain`). Plan: fix with the next `live`
-  change.
 - G-7.13 (12 `volatile` fields that do not name their threads), G-7.14 (2 unnamed thread sources), G-13.5 (test-only
   methods without `@TestOnly`), G-14.13 (time values without their unit, about 100 by sample), G-16.3 (29 unused
   variables not `_`), G-16.10 (5 `var` with a factory on the right, in tests): as touched.

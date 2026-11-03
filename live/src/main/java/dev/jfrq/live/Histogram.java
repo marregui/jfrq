@@ -4,6 +4,7 @@
 package dev.jfrq.live;
 
 import java.io.IOException;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +20,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import dev.jfrq.core.util.Bytes;
+import dev.jfrq.core.util.ClassNames;
 
 /**
  * A class histogram as {@code jcmd <pid> GC.class_histogram} prints it, and as the
@@ -35,7 +37,8 @@ record Histogram(Map<String, long[]> classes) {
     private static final Pattern ROW = Pattern.compile("^\\s*\\d+:\\s+(\\d+)\\s+(\\d+)\\s+(\\S+).*$");
 
     /**
-     * The rows of {@code text}; the header, the pid line {@code jcmd} prints first and the total are skipped.
+     * The rows of {@code text}; the header, the pid line {@code jcmd} prints first and the total are skipped. Lines
+     * end in {@code \n} or {@code \r\n}: a histogram saved on Windows reads as one saved elsewhere.
      *
      * @param source names the text in the error, a file or the JVM
      * @throws IOException when a row's count does not fit a {@code long}, naming {@code source} and the line
@@ -43,7 +46,7 @@ record Histogram(Map<String, long[]> classes) {
     static Histogram parse(final String text, final String source) throws IOException {
         final Map<String, long[]> classes = new HashMap<>();
         int lineNo = 0;
-        for (final String line : text.split("\n", -1)) {
+        for (final String line : text.split("\r?\n", -1)) {
             lineNo++;
             final Matcher m = ROW.matcher(line);
             if (m.matches()) {
@@ -60,9 +63,18 @@ record Histogram(Map<String, long[]> classes) {
         return new Histogram(classes);
     }
 
-    /** @throws IOException when the file cannot be read, holds no histogram row, or a row does not parse */
+    /**
+     * @throws IOException when the file cannot be read, is not UTF-8, holds no histogram row, or a row does not parse
+     */
     static Histogram read(final Path file) throws IOException {
-        final Histogram h = parse(Files.readString(file, StandardCharsets.UTF_8), file.toString());
+        final String text;
+        try {
+            text = Files.readString(file, StandardCharsets.UTF_8);
+        } catch (final CharacterCodingException e) {
+            throw new IOException(file + " is not UTF-8 text: likely UTF-16, as PowerShell 5.1's '>' writes it; save "
+                    + "it as UTF-8 or ASCII (Out-File -Encoding ascii)", e);
+        }
+        final Histogram h = parse(text, file.toString());
         if (h.classes().isEmpty()) {
             throw new IOException(file + " holds no class histogram rows (num: #instances #bytes class name)");
         }
@@ -178,7 +190,8 @@ record Histogram(Map<String, long[]> classes) {
     /**
      * The growth tables: the classes that grew in instances and bytes, then those that grew in
      * bytes only; a line per class with its growth first to last, then its instances and bytes
-     * in each histogram, numbered as {@code labels} are. {@code top} rows per table.
+     * in each histogram, numbered as {@code labels} are. {@code top} rows per table. Class names are printed as every
+     * jfrq table prints them, {@code int[]} for {@code [I}.
      */
     static String table(final List<String> labels, final List<Histogram> histograms, final int top) {
         final List<Grower> growers = growers(histograms);
@@ -198,7 +211,8 @@ record Histogram(Map<String, long[]> classes) {
         rows(sb, growers, top);
         for (final String filler : GC_FILLERS) {
             if (all.contains(filler)) {
-                sb.append("Left out   ").append(filler).append(": the GC's heap filler, not application objects\n");
+                sb.append("Left out   ").append(ClassNames.pretty(filler))
+                        .append(": the GC's heap filler, not application objects\n");
             }
         }
         sb.append("\nBYTES GREW AT EVERY STEP (instances did not): larger arrays or buffers, not more objects\n");
@@ -215,7 +229,7 @@ record Histogram(Map<String, long[]> classes) {
         sb.append(String.format(Locale.ROOT, "\n  %10s %12s  %s\n", "+bytes", "+instances", "class"));
         for (final Grower g : growers.subList(0, Math.min(top, growers.size()))) {
             sb.append(String.format(Locale.ROOT, "  %10s %+,12d  %s\n", Bytes.signed(g.byteGrowth()),
-                    g.instanceGrowth(), g.name()));
+                    g.instanceGrowth(), ClassNames.pretty(g.name())));
             sb.append(String.format(Locale.ROOT, "  %23s  instances %s\n", "", series(g.instances(), false)));
             sb.append(String.format(Locale.ROOT, "  %23s  bytes     %s\n", "", series(g.bytes(), true)));
         }

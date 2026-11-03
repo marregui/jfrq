@@ -73,6 +73,43 @@ class HistogramTest {
         assertEquals(0, h.bytes("absent"));
     }
 
+    /// A histogram saved with Windows line endings reads as the same histogram saved with `\n`.
+    @Test
+    void windowsLineEndingsReadTheSame() throws IOException {
+        final Histogram crlf = Histogram.read(Files.writeString(dir.resolve("crlf.txt"), START.replace("\n", "\r\n"),
+                StandardCharsets.UTF_8));
+        final Histogram lf = Histogram.parse(START, "START");
+        assertEquals(lf.classes().keySet(), crlf.classes().keySet());
+        assertEquals(78239, crlf.instances("[B"));
+        assertEquals(1010928, crlf.bytes("[I"));
+    }
+
+    /// A histogram saved as UTF-16 (PowerShell 5.1's `>`) is refused with the file's name and the likely cause.
+    @Test
+    void aUtf16HistogramIsNamedWithItsLikelyCause() throws IOException {
+        final Path utf16 = Files.writeString(dir.resolve("utf16.txt"), "\uFEFF" + START, StandardCharsets.UTF_16LE);
+        final IOException e = assertThrows(IOException.class, () -> Histogram.read(utf16));
+        assertTrue(e.getMessage().startsWith(utf16 + " is not UTF-8 text: likely UTF-16"), e.getMessage());
+    }
+
+    /// The tables print class names as every other jfrq table does, `int[]` for `[I`, `Object[]` for `[L...;`.
+    @Test
+    void theTablePrintsClassNamesPretty() throws IOException {
+        final Histogram start = Histogram.parse("""
+                   1:   10   100  [I (java.base@25)
+                   2:   10   100  [Ljava.lang.Object; (java.base@25)
+                """, "inline");
+        final Histogram end = Histogram.parse("""
+                   1:   20   200  [I (java.base@25)
+                   2:   20   200  [Ljava.lang.Object; (java.base@25)
+                """, "inline");
+        final String table = Histogram.table(List.of("s", "e"), List.of(start, end), 5);
+        assertTrue(table.contains("  int[]\n"), table);
+        assertTrue(table.contains("  java.lang.Object[]\n"), table);
+        assertFalse(table.contains("[I"), table);
+        assertFalse(table.contains("[Ljava"), table);
+    }
+
     /// Two rows of one name, a class loaded by two loaders, count as one class.
     @Test
     void twoRowsOfOneNameAreAddedTogether() throws IOException {
@@ -117,7 +154,7 @@ class HistogramTest {
         assertTrue(table.contains("instances 78,239 -> 85,000 -> 91,408"), table);
         assertTrue(table.contains("instances 75,790 -> 80,000 -> 88,996"), table);
         assertFalse(table.contains("DefaultDocumentEventUndoableWrapper"), table);
-        assertTrue(table.indexOf("[B") < table.indexOf("java.lang.String"), table);
+        assertTrue(table.indexOf("byte[]") < table.indexOf("java.lang.String"), table);
         // [I shrank and Undo$Record held still: nothing grew in bytes alone at every step.
         assertTrue(table.contains("Bytes only 0 of 6 classes\n"), table);
     }
@@ -142,8 +179,8 @@ class HistogramTest {
                 .map(Histogram.Grower::name).toList());
         final String table = Histogram.table(List.of("start", "end"), List.of(start, end), 15);
         final int heading = table.indexOf("BYTES GREW AT EVERY STEP (instances did not)");
-        assertTrue(heading > table.indexOf("  [B"), table);
-        assertTrue(table.indexOf("[I", heading) > heading, table);
+        assertTrue(heading > table.indexOf("  byte[]"), table);
+        assertTrue(table.indexOf("int[]", heading) > heading, table);
         assertTrue(table.contains("Bytes only 2 of 3 classes"), table);
         assertTrue(table.contains("instances 5,639 -> 5,180"), table);
         assertTrue(table.contains("bytes     1.01 MB -> 1.81 MB"), table);
@@ -186,7 +223,7 @@ class HistogramTest {
         assertEquals(List.of("a.B"), Histogram.growers(List.of(start, end)).stream().map(Histogram.Grower::name)
                 .toList());
         final String table = Histogram.table(List.of("s", "e"), List.of(start, end), 5);
-        assertTrue(table.contains("Left out   [Ljdk.internal.vm.FillerElement;: the GC's heap filler"), table);
+        assertTrue(table.contains("Left out   jdk.internal.vm.FillerElement[]: the GC's heap filler"), table);
     }
 
     private static List<Histogram> threeSteps() throws IOException {

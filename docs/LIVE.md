@@ -20,6 +20,15 @@ The module is `live/`; `./gradlew installDist` puts the launcher at
 `live/build/install/jfrq/bin/jfrq-live`, next to `jfrq`. It needs nothing beyond the JDK:
 `jdk.attach` to reach the process and `jdk.management.jfr` to drive its recorder.
 
+1. [The loop](#1-the-loop)
+2. [How a dump is taken](#2-how-a-dump-is-taken)
+3. [Bounds: `--max-age` and `--max-size`](#3-bounds---max-age-and---max-size)
+4. [The span check](#4-the-span-check)
+5. [The cursor file](#5-the-cursor-file)
+6. [Requirements and what can go wrong](#6-requirements-and-what-can-go-wrong)
+7. [Watching a JVM for a while: `watch`, `histo`, `growth`](#7-watching-a-jvm-for-a-while-watch-histo-growth)
+8. [On the demo](#8-on-the-demo)
+
 ## 1. The loop
 
 Every command takes the JVM's pid first. A `jfrq` command after `--` is run on the dump
@@ -234,8 +243,9 @@ window's number, `HHmm` the UTC minute it ended. The first window is a `delta` f
 cursor when the JVM has one; without one it is a `full` dump, everything the recording
 holds, so it can cover more than `--every`. The last window ends at `--for` and is shorter
 when `--for` is not a multiple of `--every`. No window starts less than half of `--every`
-after the previous one ended: a slot that close is passed over (and a last stretch that
-short is left to the next `delta`). The cursor moves with every window, so a
+after the previous one ended: a slot that close is passed over, and a last stretch that
+short gets no window and is left to the next `delta`, while the samples go on until
+`--for` ends. The cursor moves with every window, so a
 `delta` after the watch continues where it stopped. The span check's lines are printed
 for each window as `full` and `delta` print them.
 
@@ -269,31 +279,44 @@ objects only, and it is a pause the application sees. Measured on a Swing applic
 57 to 126 MB of heap in use: a `G1Full` pause of 14.9 to 26.2 ms per histogram, seven measured. The next window records
 it as a full collection with the cause `Heap Inspection Initiated GC`, and `jfrq health`
 lists it as a finding; with `--histo`, a full collection of that cause is the watch's own.
+Each histogram is announced with the line `histo --out` prints: the file, its classes,
+instances and bytes. One that fails is a note in the summary and one histogram fewer in
+the growth table, not a failed window.
 
 **The end.** The watch ends after `--for`, at once when the JVM exits, with the time it
 went, or on Ctrl-C (or `SIGTERM`), which abandons a dump in progress the way section 2
 describes, waits at most ten seconds for the window in progress, and writes the summary.
-Its status is 0 when no window failed, 1 when one did. The connection's close gets two
-seconds, and a JVM that has exited is not asked. Every call over the connection has a
+Ended by itself, its exit status is 0 when no window failed, and 1 when one did, or when
+`summary.txt` or `samples.tsv` could not be written. Ended by Ctrl-C or `SIGTERM`, it
+exits with the signal's status once the summary is written: 130 for Ctrl-C (`SIGINT`) and
+143 for `SIGTERM`, measured. The `--ask` answers never change the status: the status is
+about the watch, and the summary lists every question that did not exit with 0, with its
+own status. The connection's close gets two seconds, and a JVM that has exited is not
+asked. Every call over the connection has a
 deadline: ten seconds for a sample, two minutes for a histogram, and none reaches past
 `--for` plus 30 seconds, so a JVM that stops answering (frozen, swapping, held in a
 debugger) ends the watch about 32 seconds after `--for` at the latest, with status 1
 (measured: 52 s for `--for 20s`; a dump abandoned in flight can add the five seconds its
 cleanup is given). A JVM that does not answer is connected to again once; a second time,
 or a first one after `--for`, ends the watch with status 1. A window that fails on a good
-connection is a line in the summary, and the next window's delta covers its time; when
-the recording itself was stopped or closed, no later window can succeed, and the watch
-ends there with status 1 and says so. Window slots missed while the watch was held up (a
-laptop asleep, a slow call) are passed over, not taken back to back: each would cost a
-dump and, with `--histo`, a full GC, and histograms taken milliseconds apart hide a class
-that grows. The late window and the next one cover their time.
+connection is a line in the summary, and the next window's delta covers its time. A
+window whose dump was written keeps its row when a step after the dump fails (the span
+check, an answer's file) or the watch is stopped during one: the cursor is already past
+the dump, so the summary lists the window with its dump. A failed step is a failed
+window: the watch goes on and exits 1. When the recording itself was stopped or closed,
+no later window can succeed, and the watch ends there with status 1 and says so. Window
+slots missed while the watch was held up (a laptop asleep, a slow call) are passed over,
+not taken back to back: each would cost a dump and, with `--histo`, a full GC, and
+histograms taken milliseconds apart hide a class that grows. The late window and the next
+one cover their time.
 
 **The summary**, on standard output and in `summary.txt`: a row per window with its
 span, file, dump size, wall time for the whole window (dump, histogram, questions), wall
 time of the dump alone, and the range of the samples taken in it (process CPU, heap used,
 threads, file descriptors); then failed windows, with the window whose delta covers their
-time, questions that did not exit with 0, reconnects (with the gap they leave in
-`samples.tsv`), skipped window slots and histograms that failed; with `--histo`, the
+time, windows that failed after their dump, questions that did not exit with 0,
+reconnects (with the gap they leave in `samples.tsv`), skipped window slots and
+histograms that failed; with `--histo`, the
 growth table of all the histograms.
 
 **Its own cost**, measured with `/usr/bin/time -l` on a watch of 6 minutes, a window
@@ -340,9 +363,11 @@ The JDK keeps the closed stream object for a fixed time anyway; read in the JDK 
 - The task is scheduled when the stream opens, for 2 × `TIME_OUT` later (`TIME_OUT` is 200
   minutes), and removes the stream when it fires: **400 minutes after each dump**.
 - The stream keeps its read buffer, one block, so each dump holds one block of the target's
-  heap for 400 minutes. I set the block to 128 KiB: on a 20–27 MB dump of a live JVM, 1 MiB
-  blocks took 0.24 s, 128 KiB 0.26 s and 64 KiB 0.31 s, so 128 KiB holds an eighth as much
-  for 20 ms more per dump.
+  heap for 400 minutes. I set the block to 128 KiB, which holds an eighth of 1 MiB. One dump
+  per size of a 20–27 MB recording of a live JVM, on an Apple M2 Max laptop with JDK 25
+  (Temurin 25+36): 1 MiB blocks took 0.24 s, 128 KiB 0.26 s and 64 KiB 0.31 s. The spread
+  between runs is unmeasured, so whether 128 KiB costs 20 ms more per dump or nothing is
+  open; the median and spread of repeated dumps per size would settle it.
 
 Measured on a JVM with nothing else allocating, with 1 MiB blocks: three dumps, and
 `byte[]` grew by 1.05 MB from each histogram to the next, with one more
