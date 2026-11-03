@@ -201,7 +201,10 @@ Without `--app` the same 1,030 waits sit under the look-and-feel's
 
 `alloc --sites` ranks one row per allocating method — the innermost frame outside the JDK
 — so every path that reaches it is summed instead of ranked separately; the row says how
-many stacks it stands for and how many samples are behind all of them.
+many stacks it stands for and how many samples are behind all of them. A sample count
+that says `(all virtual)` or `(12 virtual)` counts samples taken on virtual threads: each
+is weighed by what its carrier allocated, so such a row's bytes can be far from its own
+code's ([design](design/alloc.md)).
 
 When that method is in a library you cannot change, `--app com.example` moves the
 attribution to your own innermost frame; the report lists the packages it saw, so the

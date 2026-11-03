@@ -112,10 +112,45 @@ public record AllocationReport(
     /**
      * Samples per key, alongside the bytes. The estimate weights every sample by the bytes
      * it stands for, so two rows of equal size can rest on 2 000 samples and on 3; only the
-     * count says which.
+     * count says which. The {@code virtual} maps count the samples among those taken on
+     * virtual threads: such a sample is weighed by what its carrier allocated since the
+     * carrier was last sampled, whichever thread did it, so a row resting on them can be far
+     * from what its own code allocated ({@link #warnings()}).
      */
-    public record Support(Map<String, Long> byThread, Map<String, Long> byClass, Map<Stack, Long> bySite) {
+    public record Support(Map<String, Long> byThread, Map<String, Long> byClass, Map<Stack, Long> bySite,
+            Map<String, Long> virtualByThread, Map<String, Long> virtualByClass, Map<Stack, Long> virtualBySite) {
         public static final Support NONE = new Support(Map.of(), Map.of(), Map.of());
+
+        /** Support with no virtual-thread samples. */
+        public Support(final Map<String, Long> byThread, final Map<String, Long> byClass,
+                final Map<Stack, Long> bySite) {
+            this(byThread, byClass, bySite, Map.of(), Map.of(), Map.of());
+        }
+
+        /**
+         * {@code samples} as text and HTML print them, with how many of them were taken on virtual
+         * threads: {@code 84}, {@code 84 (all virtual)}, {@code 84 (12 virtual)}.
+         */
+        public static String withVirtual(final long samples, final long virtual) {
+            return samples + virtualNote(samples, virtual);
+        }
+
+        /** What {@link #withVirtual} adds after the count: {@code " (all virtual)"}, {@code " (12 virtual)"} or nothing. */
+        public static String virtualNote(final long samples, final long virtual) {
+            return virtual <= 0 ? "" : virtual >= samples ? " (all virtual)" : " (" + virtual + " virtual)";
+        }
+
+        public long virtualThread(final String name) {
+            return virtualByThread.getOrDefault(name, 0L);
+        }
+
+        public long virtualClassName(final String name) {
+            return virtualByClass.getOrDefault(name, 0L);
+        }
+
+        public long virtualSite(final Stack stack) {
+            return virtualBySite.getOrDefault(stack, 0L);
+        }
 
         public long thread(final String name) {
             return byThread.getOrDefault(name, 0L);
@@ -142,8 +177,10 @@ public record AllocationReport(
      * @param stack   the biggest single stack in the row, printed under it
      * @param samples the samples behind every stack in the row, not only {@code stack}
      * @param stacks  how many distinct stacks were summed
+     * @param virtualSamples of {@code samples}, those taken on virtual threads, weighed by their carrier
      */
-    public record SiteRow(String label, Stack stack, long bytes, double share, long samples, int stacks) {
+    public record SiteRow(String label, Stack stack, long bytes, double share, long samples, int stacks,
+            long virtualSamples) {
     }
 
     /**
@@ -197,7 +234,8 @@ public record AllocationReport(
                 + ", not counted, because a sample is weighed by its carrier's allocation since the carrier was last "
                 + "sampled, which can reach back before the recording; a virtual thread that moved to a carrier not "
                 + "yet sampled carries that history on a later sample, kept when it weighs less than the recording's "
-                + "counted allocation (docs/design/alloc.md)";
+                + "counted allocation; a row whose samples say 'virtual' rests on such samples, and its bytes are its "
+                + "carriers' (docs/design/alloc.md)";
     }
 
     public double seconds() {
@@ -320,12 +358,12 @@ public record AllocationReport(
         final Map<String, Fold> folds = new HashMap<>();
         for (final Map.Entry<Stack, Long> e : bySite.entrySet()) {
             folds.computeIfAbsent(key.of(e.getKey()), _ -> new Fold())
-                    .add(e.getKey(), e.getValue(), support.site(e.getKey()));
+                    .add(e.getKey(), e.getValue(), support.site(e.getKey()), support.virtualSite(e.getKey()));
         }
         final double total = Math.max(totalBytes, 1);
         final Map<String, SiteRow> rows = new LinkedHashMap<>(folds.size());
         folds.forEach((label, f) -> rows.put(label,
-                new SiteRow(label, f.best, f.bytes, f.bytes / total, f.samples, f.stacks)));
+                new SiteRow(label, f.best, f.bytes, f.bytes / total, f.samples, f.stacks, f.virtualSamples)));
         return rows;
     }
 
@@ -380,11 +418,13 @@ public record AllocationReport(
         private long bestBytes = -1;
         private long bytes;
         private long samples;
+        private long virtualSamples;
         private int stacks;
 
-        void add(final Stack stack, final long stackBytes, final long stackSamples) {
+        void add(final Stack stack, final long stackBytes, final long stackSamples, final long stackVirtual) {
             bytes += stackBytes;
             samples += stackSamples;
+            virtualSamples += stackVirtual;
             stacks++;
             // The stack printed under a row is its biggest contributor, so the lines a reader
             // sees are the ones most of the row's bytes came through.

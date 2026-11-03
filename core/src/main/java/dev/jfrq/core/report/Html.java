@@ -594,7 +594,8 @@ public final class Html {
                 classes.append(ClassNames.simple(c.key())).append(' ').append(pct(c.bytes(), r.bytes()));
             }
             p.row(r.key(), Bytes.format(r.bytes()), report.counted(r.key()).map(Bytes::format).orElse(""),
-                    Bytes.rate(report.rate(r.bytes())), pct(r.share()), report.support().thread(r.key()), classes);
+                    Bytes.rate(report.rate(r.bytes())), pct(r.share()), AllocationReport.Support.withVirtual(
+                    report.support().thread(r.key()), report.support().virtualThread(r.key())), classes);
         }
         p.tableEnd();
 
@@ -602,7 +603,8 @@ public final class Html {
         p.tableStart("Class", "Bytes", "Rate", "Share", "Samples");
         for (final AllocationReport.Row<String> r : report.classes(top)) {
             p.row(ClassNames.pretty(r.key()), Bytes.format(r.bytes()), Bytes.rate(report.rate(r.bytes())),
-                    pct(r.share()), report.support().className(r.key()));
+                    pct(r.share()), AllocationReport.Support.withVirtual(report.support().className(r.key()),
+                    report.support().virtualClassName(r.key())));
         }
         p.tableEnd();
 
@@ -621,7 +623,8 @@ public final class Html {
         p.tableStart("Site", "Bytes", "Rate", "Share", "Samples");
         for (final AllocationReport.SiteRow r : report.sites(key, top)) {
             p.row(r.label() + (r.stacks() > 1 ? " (" + r.stacks() + " stacks, the biggest below)" : ""),
-                    Bytes.format(r.bytes()), Bytes.rate(report.rate(r.bytes())), pct(r.share()), r.samples());
+                    Bytes.format(r.bytes()), Bytes.rate(report.rate(r.bytes())), pct(r.share()),
+                    AllocationReport.Support.withVirtual(r.samples(), r.virtualSamples()));
             p.stackRow(5, r.stack());
         }
         p.tableEnd();

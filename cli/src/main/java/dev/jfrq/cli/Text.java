@@ -365,7 +365,8 @@ final class Text {
                         .append(String.format(Locale.ROOT, "%.0f%%", 100.0 * c.bytes() / Math.max(1, row.bytes())));
             }
             threads.row(row.key(), Bytes.format(row.bytes()), r.counted(row.key()).map(Bytes::format).orElse(""),
-                    Bytes.rate(r.rate(row.bytes())), pct(row.share()), r.support().thread(row.key()), classes);
+                    Bytes.rate(r.rate(row.bytes())), pct(row.share()), AllocationReport.Support.withVirtual(
+                    r.support().thread(row.key()), r.support().virtualThread(row.key())), classes);
         }
         sb.append(threads.render("  "));
 
@@ -373,7 +374,8 @@ final class Text {
         final TextTable classes = new TextTable("Class", "Bytes", "Rate", "Share", "Samples").numeric(1, 2, 3, 4);
         for (final AllocationReport.Row<String> row : r.classes(top)) {
             classes.row(ClassNames.pretty(row.key()), Bytes.format(row.bytes()), Bytes.rate(r.rate(row.bytes())),
-                    pct(row.share()), r.support().className(row.key()));
+                    pct(row.share()), AllocationReport.Support.withVirtual(r.support().className(row.key()),
+                    r.support().virtualClassName(row.key())));
         }
         sb.append(classes.render("  "));
 
@@ -382,9 +384,10 @@ final class Text {
             sb.append(packages(r, key));
             int n = 1;
             for (final AllocationReport.SiteRow row : r.sites(key, top)) {
-                sb.append(String.format(Locale.ROOT, "  %2d  %10s  %10s  %6s  %d sample%s  %s%s\n", n++,
+                sb.append(String.format(Locale.ROOT, "  %2d  %10s  %10s  %6s  %d sample%s%s  %s%s\n", n++,
                         Bytes.format(row.bytes()), Bytes.rate(r.rate(row.bytes())), pct(row.share()),
-                        row.samples(), row.samples() == 1 ? "" : "s", row.label(),
+                        row.samples(), row.samples() == 1 ? "" : "s",
+                        AllocationReport.Support.virtualNote(row.samples(), row.virtualSamples()), row.label(),
                         row.stacks() > 1 ? "  (" + row.stacks() + " stacks, the biggest below)" : ""));
                 sb.append(row.stack().pretty("        ", STACK_FRAMES));
             }

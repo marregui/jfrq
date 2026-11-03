@@ -120,6 +120,11 @@ class AllocationTest {
         assertEquals(Map.of("worker", 400L, "vt-1", 700L), r.byThread());
         assertEquals(Map.of(SITE_A, 400L, SITE_B, 700L), r.bySite());
         assertEquals(1, r.support().thread("vt-1"));
+        // The row says what it rests on: vt-1's kept sample is virtual, the worker's is not.
+        assertEquals(1, r.support().virtualThread("vt-1"));
+        assertEquals(0, r.support().virtualThread("worker"));
+        assertEquals(1, r.support().virtualSite(SITE_B));
+        assertEquals(0, r.support().virtualSite(SITE_A));
         // The platform thread's first sample is not in the count: only the virtual threads' are.
         assertEquals(new AllocationReport.Dropped(2, 5_000_900), r.virtualFirsts());
         assertEquals(1, r.warnings().size());
@@ -147,6 +152,17 @@ class AllocationTest {
         assertEquals(13_000_000, r.totalBytes());
         assertEquals(2, r.samples());
         assertEquals(Map.of(SITE_B, 13_000_000L), r.bySite());
+        // The two samples left are virtual, and the dropped ones left the virtual counts with them.
+        assertEquals(2, r.support().virtualThread("vt-1"));
+        assertEquals(2, r.support().virtualClassName("[B"));
+        assertEquals(2, r.support().virtualSite(SITE_B));
+        assertEquals(0, r.support().virtualSite(SITE_A));
+        final AllocationReport.SiteRow row = r.sites(SiteKey.culpritMethod(), 5).getFirst();
+        assertEquals(2, row.samples());
+        assertEquals(2, row.virtualSamples());
+        assertEquals("2 (all virtual)", AllocationReport.Support.withVirtual(row.samples(), row.virtualSamples()));
+        assertEquals("92 (12 virtual)", AllocationReport.Support.withVirtual(92, 12));
+        assertEquals("92", AllocationReport.Support.withVirtual(92, 0));
         assertEquals(new AllocationReport.Dropped(1, 300), r.virtualFirsts());
         assertEquals(new AllocationReport.Dropped(1, 900_000_000L), r.carrierHistory());
         assertTrue(r.warnings().getFirst().contains("and 1 later one heavier than the recording's counted allocation, "
