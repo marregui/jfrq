@@ -91,11 +91,11 @@ public final class WaitCollector implements JfrReader.Sink {
             return;
         }
         final ThreadRef thread = interner.thread(e);
-        if (thread == null || !threads.passes(thread)) {
+        if (thread == null || !watches(thread)) {
             // Most events of a filtered pass are other threads': their class is not read.
             return;
         }
-        final Waits into = waitsOf(monitor ? WaitReport.Kind.WAIT : WaitReport.Kind.PARK, thread,
+        final Waits into = waitsOf(monitor ? WaitReport.Kind.WAIT : WaitReport.Kind.PARK,
                 Events.className(e, monitor ? Fields.MONITOR_CLASS : Fields.PARKED_CLASS, interner));
         if (into != null) {
             into.add(Events.startNanos(e), Events.endNanos(e), Events.stack(e, interner));
@@ -103,16 +103,21 @@ public final class WaitCollector implements JfrReader.Sink {
     }
 
     /**
-     * Where a wait by {@code thread} on {@code cls} is kept, or {@code null} when the thread or the
-     * class filter leaves it out. A {@code null} class is a park with no blocker object,
-     * {@link Absent#NO_BLOCKER}. The thread filter runs once per thread, the class filter once per class.
-     * {@link #accept(RecordedEvent, int)} asks the thread filter before reading the class, and reads
-     * the time and the stack only of a wait kept here.
+     * Whether {@code --thread} keeps {@code thread}'s waits: the first of the two steps
+     * {@link #accept(RecordedEvent, int)} takes per event, asked once per event and decided once
+     * per thread.
      */
-    Waits waitsOf(final WaitReport.Kind kind, final ThreadRef thread, final String cls) {
-        if (!threads.passes(thread)) {
-            return null;
-        }
+    boolean watches(final ThreadRef thread) {
+        return threads.passes(thread);
+    }
+
+    /**
+     * The second step: where a wait on {@code cls} by a watched thread is kept, or {@code null}
+     * when {@code --monitor} leaves the class out, decided once per class. A {@code null} class is
+     * a park with no blocker object, {@link Absent#NO_BLOCKER}. {@link #accept(RecordedEvent, int)}
+     * reads the class only of a watched thread's event, and the time and stack only of a wait kept here.
+     */
+    Waits waitsOf(final WaitReport.Kind kind, final String cls) {
         final ObjObjHashMap<String, Waits> byClass = kind == WaitReport.Kind.WAIT ? waits : parks;
         final String name = cls == null ? Absent.NO_BLOCKER : cls;
         final int index = byClass.keyIndex(name);

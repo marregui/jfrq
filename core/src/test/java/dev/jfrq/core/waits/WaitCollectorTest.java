@@ -39,10 +39,10 @@ class WaitCollectorTest {
         return new Stack(List.of(out), false);
     }
 
-    /// A wait read from an event, the path `accept` takes once the event's fields are read.
+    /// A wait read from an event, through the two steps `accept` takes once the event's fields are read.
     private static void waited(final WaitCollector c, final WaitReport.Kind kind, final ThreadRef thread,
             final String cls, final long startNanos, final long endNanos, final Stack stack) {
-        final WaitCollector.Waits into = c.waitsOf(kind, thread, cls);
+        final WaitCollector.Waits into = c.watches(thread) ? c.waitsOf(kind, cls) : null;
         if (into != null) {
             into.add(startNanos, endNanos, stack);
         }

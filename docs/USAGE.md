@@ -354,9 +354,11 @@ connection. Every `--every` it takes a window, a `delta` dump into `wNN-HHmm.jfr
 open file descriptors and committed virtual memory to `samples.tsv`; with `--histo` it
 takes a class histogram at the start and after each window, each one a full GC in the JVM.
 It ends with a summary table, a row per window, on standard output and in `summary.txt`,
-and exits 1 when a window failed, the recording was stopped under it, or the JVM stopped
-answering, else 0. A JVM that stops answering ends it about 32 seconds after `--for` at
-the latest.
+and exits 0 when `--for` is up or the JVM exits; 1 when a window failed, the recording was
+stopped under it, the JVM stopped answering, or `summary.txt` or `samples.tsv` could not be
+written; 130 on Ctrl-C and 143 on `SIGTERM`, once the summary is written
+([LIVE.md §7](LIVE.md#7-watching-a-jvm-for-a-while-watch-histo-growth)). A JVM that stops
+answering ends it about 32 seconds after `--for` at the latest.
 `--out` is a new or empty directory (default `watch-<pid>-<yyyyMMdd-HHmm>`, UTC).
 
 ```
