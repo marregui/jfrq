@@ -233,7 +233,9 @@ lock, clone, span check) into `wNN-HHmm.jfr` in the output directory: `NN` is th
 window's number, `HHmm` the UTC minute it ended. The first window is a `delta` from the
 cursor when the JVM has one; without one it is a `full` dump, everything the recording
 holds, so it can cover more than `--every`. The last window ends at `--for` and is shorter
-when `--for` is not a multiple of `--every`. The cursor moves with every window, so a
+when `--for` is not a multiple of `--every`. No window starts less than half of `--every`
+after the previous one ended: a slot that close is passed over (and a last stretch that
+short is left to the next `delta`). The cursor moves with every window, so a
 `delta` after the watch continues where it stopped. The span check's lines are printed
 for each window as `full` and `delta` print them.
 
@@ -268,22 +270,23 @@ objects only, and it is a pause the application sees. Measured on a Swing applic
 it as a full collection with the cause `Heap Inspection Initiated GC`, and `jfrq health`
 lists it as a finding; with `--histo`, a full collection of that cause is the watch's own.
 
-**The end.** The watch exits with status 0 after `--for`, and at once when the JVM
-exits, with the time it went. Ctrl-C (or `SIGTERM`) abandons a dump in progress the way
-section 2 describes, waits at most ten seconds for the window in progress, writes the
-summary, and gives the JVM two seconds to answer the connection's close; a JVM that has
-exited is not asked. Every call over the connection has a deadline: ten seconds for a
-sample, two minutes for a histogram, and none reaches past `--for` plus 30 seconds, so a
-JVM that stops answering (frozen, swapping, held in a debugger) cannot keep the watch
-past that. A JVM that does not answer is connected to again once; a second time, or a
-first one after `--for`, ends the watch with status 1. A window that fails on a good
+**The end.** The watch ends after `--for`, at once when the JVM exits, with the time it
+went, or on Ctrl-C (or `SIGTERM`), which abandons a dump in progress the way section 2
+describes, waits at most ten seconds for the window in progress, and writes the summary.
+Its status is 0 when no window failed, 1 when one did. The connection's close gets two
+seconds, and a JVM that has exited is not asked. Every call over the connection has a
+deadline: ten seconds for a sample, two minutes for a histogram, and none reaches past
+`--for` plus 30 seconds, so a JVM that stops answering (frozen, swapping, held in a
+debugger) ends the watch about 32 seconds after `--for` at the latest, with status 1
+(measured: 52 s for `--for 20s`; a dump abandoned in flight can add the five seconds its
+cleanup is given). A JVM that does not answer is connected to again once; a second time,
+or a first one after `--for`, ends the watch with status 1. A window that fails on a good
 connection is a line in the summary, and the next window's delta covers its time; when
 the recording itself was stopped or closed, no later window can succeed, and the watch
-ends there with status 1 and says so. A watch whose time was up but that has a failed
-window also exits 1. Window slots missed while the watch was held up (a laptop asleep, a
-slow call) are skipped, not taken back to back: each would cost a dump and, with
-`--histo`, a full GC, and histograms taken milliseconds apart hide a class that grows.
-The next window's delta covers their time.
+ends there with status 1 and says so. Window slots missed while the watch was held up (a
+laptop asleep, a slow call) are passed over, not taken back to back: each would cost a
+dump and, with `--histo`, a full GC, and histograms taken milliseconds apart hide a class
+that grows. The late window and the next one cover their time.
 
 **The summary**, on standard output and in `summary.txt`: a row per window with its
 span, file, dump size, wall time for the whole window (dump, histogram, questions), wall

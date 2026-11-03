@@ -77,7 +77,7 @@ class WatchTest {
             assertFalse(samples.get(2).split("\t", -1)[1].isEmpty(), samples.get(2));
             final String summary = Files.readString(out.resolve("summary.txt"), StandardCharsets.UTF_8);
             assertTrue(watch.out().endsWith(summary), watch.out());
-            assertTrue(summary.contains("ended: the time was up"), summary);
+            assertTrue(summary.contains(": the time was up"), summary);
             assertTrue(summary.contains("\n  1   "), summary);
             assertTrue(summary.contains("\n  2   "), summary);
             assertTrue(summary.contains("Growth     " + (windows + 1) + " histograms"), summary);
@@ -116,7 +116,7 @@ class WatchTest {
             thread.join(30_000);
             assertEquals(0, status.get());
             final String text = bytes.toString(StandardCharsets.UTF_8);
-            assertTrue(text.contains("ended: stopped"), text);
+            assertTrue(text.contains(": stopped\n"), text);
             assertEquals(text.indexOf("Summary"), text.lastIndexOf("Summary"), text);
             assertTrue(Files.readString(out.resolve("summary.txt"), StandardCharsets.UTF_8).contains("0 windows"));
         } finally {
@@ -148,11 +148,52 @@ class WatchTest {
             child.getOutputStream().close();
             final LiveTest.Run run = watch.get(60, TimeUnit.SECONDS);
             assertEquals(0, run.status(), run.err());
-            assertTrue(run.out().contains("ended: JVM " + child.pid() + " exited at "), run.out());
+            assertTrue(run.out().contains(": JVM " + child.pid() + " exited at "), run.out());
         } finally {
             child.destroy();
             assertTrue(child.waitFor(30, TimeUnit.SECONDS));
         }
+    }
+
+    /// A recording stopped under the watch ends it with status 1 and says so: no later window could succeed.
+    @Test
+    void aRecordingStoppedUnderTheWatchEndsIt() throws Exception {
+        final String name = "watch-gone-" + System.nanoTime();
+        assertEquals(0, LiveTest.run(PID, "start", "--name", name, "--state", dir.toString()).status());
+        final Path out = dir.resolve("g");
+        final CompletableFuture<LiveTest.Run> watch = CompletableFuture.supplyAsync(() -> LiveTest.run(PID, "watch",
+                "--every", "1s", "--for", "1m", "--sample", "1s", "--recording", name, "--state", dir.toString(),
+                "--out", out.toString()));
+        awaitLines(out.resolve("samples.tsv"), 2);
+        assertEquals(0, LiveTest.run(PID, "stop", "--recording", name).status());
+        final LiveTest.Run run = watch.get(60, TimeUnit.SECONDS);
+        assertEquals(1, run.status(), run.out() + run.err());
+        assertTrue(run.out().contains("no later window can be taken"), run.out());
+    }
+
+    /// The next window's slot: on the grid when on time; slots under half of --every after the previous window
+    /// ended are passed over, mid-run and at the end, so no two windows (and no two histograms) come back to back.
+    @Test
+    void windowsNeverComeBackToBack() {
+        final long every = 10;
+        final long end = 100;
+        // On time: the next slot, nothing skipped.
+        assertEquals(new Watch.Slot(30, 0, false), Watch.nextSlot(20, 21, every, end));
+        // Held up from slot 20 to 54: slots 30, 40 and 50 are passed over; 60 is the first 5 or more after 54.
+        assertEquals(new Watch.Slot(60, 3, false), Watch.nextSlot(20, 54, every, end));
+        // Held up to 57: 60 is under half of --every away, so it goes too.
+        assertEquals(new Watch.Slot(70, 4, false), Watch.nextSlot(20, 57, every, end));
+        // The last window ends at --for, when that is at least half of --every away.
+        assertEquals(new Watch.Slot(100, 0, false), Watch.nextSlot(90, 91, every, end));
+        // A hold-up across the end: no last window, rather than one milliseconds after the late one.
+        assertEquals(new Watch.Slot(100, 0, true), Watch.nextSlot(90, 97, every, end));
+        assertEquals(new Watch.Slot(100, 1, true), Watch.nextSlot(80, 104, every, end));
+        // --for not a multiple of --every: a last stretch of 7 is a window, one of 3 is not.
+        assertEquals(new Watch.Slot(97, 0, false), Watch.nextSlot(90, 90, every, 97));
+        assertEquals(new Watch.Slot(93, 0, true), Watch.nextSlot(90, 90, every, 93));
+        // Times near the end of the long range compare by difference, as nanoTime requires.
+        final long base = Long.MAX_VALUE - 15;
+        assertEquals(new Watch.Slot(base + 10, 0, false), Watch.nextSlot(base, base + 1, every, base + 100));
     }
 
     /// A JVM that cannot be attached to fails the command with status 1, and no summary claims a watch that never ran.

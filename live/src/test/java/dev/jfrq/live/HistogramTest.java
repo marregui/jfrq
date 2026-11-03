@@ -87,8 +87,7 @@ class HistogramTest {
     /// A grower grew in instances and bytes at every step; a class that shrank once, or held still once, is not one.
     @Test
     void growersGrewAtEveryStep() throws IOException {
-        final List<Histogram.Grower> growers = Histogram.growers(
-                List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE"), Histogram.parse(END, "END")));
+        final List<Histogram.Grower> growers = Histogram.growers(threeSteps());
         // [I shrank; Undo$Record held still from the middle to the end; the lambda left.
         assertEquals(List.of("[B", "java.lang.String",
                 "javax.swing.text.AbstractDocument$DefaultDocumentEventUndoableWrapper"),
@@ -111,7 +110,7 @@ class HistogramTest {
     @Test
     void theTableListsEachGrowersCountsPerFile() throws IOException {
         final String table = Histogram.table(List.of("start.txt", "middle.txt", "end.txt"),
-                List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE"), Histogram.parse(END, "END")), 2);
+                threeSteps(), 2);
         assertTrue(table.contains("   1  start.txt\n   2  middle.txt\n   3  end.txt\n"), table);
         assertTrue(table.contains("Growers    3 of 6 classes grew in instances and bytes from each histogram to "
                 + "the next (top 2 by bytes)"), table);
@@ -171,5 +170,9 @@ class HistogramTest {
         assertTrue(bad.err().contains(huge + " line 1: a count does not fit 64 bits"), bad.err());
         assertFalse(bad.err().contains("the JVM"), bad.err());
         assertTrue(LiveTest.run("growth", "--help").out().contains("growth H1 H2"));
+    }
+
+    private static List<Histogram> threeSteps() throws IOException {
+        return List.of(Histogram.parse(START, "START"), Histogram.parse(MIDDLE, "MIDDLE"), Histogram.parse(END, "END"));
     }
 }

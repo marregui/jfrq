@@ -214,32 +214,62 @@ final class Watch {
                 if (nextWindowNanos == endNanos) {
                     return "the time was up";
                 }
+                final long afterNanos = System.nanoTime();
+                final Slot next = nextSlot(nextWindowNanos, afterNanos, plan.everyNanos(), endNanos);
+                if (next.skipped() > 0) {
+                    note(String.format(Locale.ROOT, "%d window slot%s skipped after window %d: the watch was held up "
+                            + "(a sleeping host, a slow call), and window %d%s covers %s time", next.skipped(),
+                            next.skipped() == 1 ? " was" : "s were", window, window,
+                            next.none() ? "" : " with the next one", next.skipped() == 1 ? "its" : "their"));
+                }
+                if (next.none()) {
+                    if (endNanos - afterNanos > 0) {
+                        note("the last " + Durations.format(endNanos - afterNanos) + " before --for ended are in no "
+                                + "window, being under half of --every after window " + window
+                                + "; the next delta covers them");
+                    }
+                    return "the time was up";
+                }
                 window++;
                 begin = end;
-                nextWindowNanos = nextWindow(nextWindowNanos, window - 1);
+                nextWindowNanos = next.dueNanos();
             }
         }
     }
 
     /**
-     * The slot after {@code dueNanos} that is still ahead: slots missed while the watch was held
-     * up are skipped, not taken back to back, since each would cost a dump (and with
-     * {@code --histo} a full GC) and histograms taken milliseconds apart hide a growing class.
+     * When the next window is due: {@code dueNanos} is the slot of the window just taken,
+     * {@code afterNanos} when it ended.
+     *
+     * @param dueNanos the next slot on the {@code --every} grid, or {@code --for}'s end for the last
+     * @param skipped  the grid slots before {@code --for}'s end passed over
+     * @param none     no window is left: the stretch to the end is under the minimum gap
      */
-    private long nextWindow(final long dueNanos, final int taken) {
-        final long nowNanos = System.nanoTime();
-        long next = dueNanos + plan.everyNanos();
-        int skipped = 0;
-        while (next - nowNanos <= 0 && next - endNanos < 0) {
-            next += plan.everyNanos();
-            skipped++;
+    record Slot(long dueNanos, int skipped, boolean none) {
+    }
+
+    /**
+     * The next window's slot. No window starts less than half of {@code --every} after the
+     * previous one ended: slots closer than that, missed while the watch was held up (a
+     * sleeping host, a slow call), are passed over rather than taken back to back, since each
+     * costs a dump (with {@code --histo} a full GC) and histograms taken milliseconds apart
+     * hide a class that grows. The grid stays where {@code --every} put it, so the window
+     * after a passed slot lasts from half to one and a half {@code --every}; the last window
+     * ends at {@code --for}, or there is none when that is under the minimum gap away.
+     * Nanosecond times are compared by difference, as {@link System#nanoTime()} requires.
+     */
+    static Slot nextSlot(final long dueNanos, final long afterNanos, final long everyNanos, final long endNanos) {
+        final long minGapNanos = everyNanos / 2;
+        long next = dueNanos + everyNanos;
+        if (next - afterNanos < minGapNanos) {
+            next += ((afterNanos + minGapNanos - next) / everyNanos + 1) * everyNanos;
         }
-        if (skipped > 0) {
-            note(String.format(Locale.ROOT, "%d window slot%s skipped after window %d: the watch was held up (a "
-                    + "sleeping host, a slow call); the next window covers %s time", skipped,
-                    skipped == 1 ? " was" : "s were", taken, skipped == 1 ? "its" : "their"));
+        if (next - endNanos < 0) {
+            return new Slot(next, (int) ((next - dueNanos) / everyNanos - 1), false);
         }
-        return next - endNanos < 0 ? next : endNanos;
+        // Grid slots strictly between the window just taken and the end were passed over.
+        final int skipped = endNanos - dueNanos > everyNanos ? (int) ((endNanos - dueNanos - 1) / everyNanos) : 0;
+        return new Slot(endNanos, skipped, endNanos - afterNanos < minGapNanos);
     }
 
     /** What is left before {@code --for} plus {@link #GRACE}: the bound of a call that has none of its own. */
@@ -384,7 +414,16 @@ final class Watch {
             taken = Jvm.within(() -> Live.take(on, command, of, stateDir, file, true, err), untilEnd(),
                     "the window's dump");
         } catch (final IOException | RuntimeException e) {
-            final String why = recover("the window's dump", e);
+            final String why;
+            try {
+                why = recover("the window's dump", e);
+            } catch (final CutShort c) {
+                synchronized (this) {
+                    rows.add(new Row(index, begin, end, base, -1, 0, System.nanoTime() - t0Nanos, List.of(),
+                            "the watch ended during it"));
+                }
+                throw c;
+            }
             synchronized (this) {
                 rows.add(new Row(index, begin, end, base, -1, 0, System.nanoTime() - t0Nanos, List.of(), why));
             }
@@ -440,8 +479,8 @@ final class Watch {
             return why;
         }
         if (reconnected || stopping || System.nanoTime() - endNanos >= 0) {
-            throw new CutShort("JVM " + plan.pid() + " no longer answers" + (reconnected ? " (connected again once)" : "")
-                    + ": " + why);
+            throw new CutShort("JVM " + plan.pid() + " no longer answers"
+                    + (reconnected ? " (connected again once)" : "") + ": " + why);
         }
         reconnected = true;
         Live.line(err, "jfrq-live: JVM " + plan.pid() + " did not answer " + what + " (" + why
@@ -571,9 +610,9 @@ final class Watch {
 
     private String summary(final String ended) {
         final StringBuilder sb = new StringBuilder("\n");
-        sb.append(String.format(Locale.ROOT, "Summary    %d window%s, %d sample%s in %s; ended: %s after %s\n",
+        sb.append(String.format(Locale.ROOT, "Summary    %d window%s, %d sample%s in %s; ended after %s: %s\n",
                 rows.size(), rows.size() == 1 ? "" : "s", points.size(), points.size() == 1 ? "" : "s", plan.dir(),
-                ended, Durations.format(startNanos == 0 ? 0 : System.nanoTime() - startNanos)));
+                Durations.format(startNanos == 0 ? 0 : System.nanoTime() - startNanos), ended));
         sb.append(String.format(Locale.ROOT, "\n  %-3s %-20s %-18s %9s %9s %9s  %-15s %-21s %-11s %s\n", "#",
                 "window (UTC)", "file", "dump", "took", "dumping", "process CPU %", "heap used", "threads", "fds"));
         for (final Row r : rows) {
