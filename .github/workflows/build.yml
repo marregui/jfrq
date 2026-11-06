@@ -27,7 +27,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       # The JFR-backed tests record in-process; they assert verdicts and orders of magnitude,
       # not exact durations, so they hold on a shared runner. check also runs doclint over the
       # Javadoc and Checkstyle for unused imports.
@@ -67,7 +67,7 @@ jobs:
           java-version: |
             21
             25
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - run: ./gradlew installDist testFixturesJar
       - name: Record with JDK 21
         run: |
